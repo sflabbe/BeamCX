@@ -1,0 +1,25 @@
+name: Lua and UI smoke tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Lua runtime used by test harness
+        run: sudo apt-get update && sudo apt-get install -y liblua5.4-0
+      - name: Generate the TI-Lua bundle
+        run: python3 build.py
+      - name: Run mechanics, catalogue and drawing tests
+        run: |
+          set -e
+          for test in tests/test_*.py; do
+            echo "Running $test"
+            python3 "$test"
+          done

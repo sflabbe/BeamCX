@@ -98,7 +98,7 @@ The tests use Python standard library `ctypes` to execute actual Lua code agains
 
 ## License
 
-**No license selected yet.** Choose and add a `LICENSE` file before publishing as an open-source project. Until then, the absence of a license does not grant reuse rights by default.
+MIT
 
 ## Development note
 

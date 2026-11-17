@@ -245,4 +245,96 @@ function Beam.moment_extrema(sol)
     return low,xmin,high,xmax
 end
 
+-- Roots of a quadratic, used only to partition the cubic slope into monotone
+-- intervals. Stable product form avoids cancellation at a small root.
+local function quadratic_roots(a,b,c)
+    if a==0 then
+        if b==0 then return {} end
+        return {-c/b}
+    end
+    local disc=b*b-4*a*c
+    if disc<0 then return {} end
+    local v=-0.5*(b+(b>=0 and 1 or -1)*math.sqrt(disc))
+    if v==0 then return {-b/(2*a)} end
+    return {v/a,c/v}
+end
+
+-- Extrema of the SAME quartic w(t) used by Beam.at, t=s/element length.
+-- All boundaries and stationary points are considered. Cubic roots are isolated
+-- by the exact quadratic turning points, then bisected (no graphical sampling).
+function Beam.deflection_extrema(sol)
+    local best,xbest=0,0
+    for _,el in ipairs(sol.elems) do
+        local d,L=el.u,el.L
+        local k=el.q*L^4/(24*sol.p.EI)
+        local c1=L*d[3]
+        local c2=-3*d[2]-2*L*d[3]+3*d[5]-L*d[6]-k
+        local c3=2*d[2]+L*d[3]-2*d[5]+L*d[6]+2*k
+        local c4=-k
+        -- Normalize to keep root tolerances independent of load / EI magnitude.
+        local scale=math.max(math.abs(c1),math.abs(2*c2),math.abs(3*c3),math.abs(4*c4))
+        local cuts={0,1}
+        local candidates={0,1}
+        if scale>0 then
+            local a,b,c,d0=4*c4/scale,3*c3/scale,2*c2/scale,c1/scale
+            local function slope(t) return ((a*t+b)*t+c)*t+d0 end
+            for _,t in ipairs(quadratic_roots(3*a,2*b,c)) do
+                if t>0 and t<1 then cuts[#cuts+1]=t end
+            end
+            table.sort(cuts)
+            for _,t in ipairs(cuts) do
+                -- Includes repeated stationary roots with no sign change.
+                if math.abs(slope(t))<1e-13 then candidates[#candidates+1]=t end
+            end
+            for i=1,#cuts-1 do
+                local lo,hi=cuts[i],cuts[i+1]
+                local flo,fhi=slope(lo),slope(hi)
+                if (flo<0 and fhi>0) or (flo>0 and fhi<0) then
+                    for j=1,60 do
+                        local mid=(lo+hi)/2
+                        local fm=slope(mid)
+                        if fm==0 then lo=mid;hi=mid;break end
+                        if (flo<0 and fm<0) or (flo>0 and fm>0) then
+                            lo=mid;flo=fm
+                        else hi=mid end
+                    end
+                    candidates[#candidates+1]=(lo+hi)/2
+                end
+            end
+        end
+        for _,t in ipairs(candidates) do
+            local x=el.x0+el.L*t
+            local w=math.abs(Beam.at(sol,x).w)*1000 -- m -> mm
+            if w>best then best=w;xbest=x end
+        end
+    end
+    return best,xbest
+end
+
+-- Deflection comparison only; not a code-compliance certificate.
+function Beam.deflection_check(sol,limit)
+    local w,x=Beam.deflection_extrema(sol)
+    local ratio=w>0 and sol.p.L*1000/w or nil
+    local u250=w/(sol.p.L*1000/250)
+    local u300=w/(sol.p.L*1000/300)
+    local utilization=(limit==300) and u300 or u250
+    local status='N/A'
+    if ratio then status=utilization<=1+1e-12 and 'OK' or 'EXCEEDED' end
+    return {w_abs_max=w,x_wmax=x,ratio=ratio,u250=u250,u300=u300,status=status}
+end
+
+-- Numeric results in the documented bx_ export units. Shear extrema include
+-- both faces of every segment, including jumps at the point load.
+function Beam.summary(sol,limit)
+    local out=Beam.deflection_check(sol,limit)
+    local low,_,high=Beam.moment_extrema(sol)
+    out.mmin=low;out.mmax=high
+    out.vabs=0
+    for _,el in ipairs(sol.elems) do
+        out.vabs=math.max(out.vabs,math.abs(el.f[2]),math.abs(el.f[2]-el.q*el.L))
+    end
+    out.ra=sol.r[2];out.rb=sol.r[#sol.r-1];out.ei=sol.p.EI
+    return out
+end
+
 return Beam

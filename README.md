@@ -3,13 +3,16 @@
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
 TI-Lua 5.1 app for one prismatic beam span, with support presets, load diagrams, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.2.3**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.3 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
 
 ## Features
 
 - One horizontal span with four boundary-condition presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned.
 - Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards.
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
+- Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
+- Optional automatic self-weight from steel catalogue mass or concrete rectangle dimensions; **OFF by default**.
+- Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem.
 - **Plot convention:** sagging moment `M > 0` is drawn *below* the reference line, hogging `M < 0` *above* it.
 - Offline `EI` input or automatic `EI = E × I` via:
   - Concrete **C20/25, C25/30, C30/37** and editable gross rectangular section `b × h` in mm.
@@ -34,20 +37,52 @@ for test in tests/test_*.py; do python3 "$test"; done
 ~/Luna/luna BeamCX.lua BeamCX.tns
 ```
 
+If Lua 5.1 is installed, also check the target syntax and run the new analytical/UI regressions:
+
+```bash
+luac5.1 -p BeamCX.lua
+lua5.1 tests/quick_check.lua "$PWD"
+```
+
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
-Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. Earlier BeamCX versions were observed running on hardware. The **v0.2.3 load-arrow rendering** has not yet been confirmed on physical hardware; this repository's tests simulate drawing calls, not LCD pixels.
+Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. Earlier BeamCX versions were observed running on hardware. **v0.3 has not been validated on physical hardware**, including CAS access from Calculator; local tests execute Lua and simulate the TI canvas and variable API.
 
 ## Keys
 
-| Key | Beam input | Diagrams | Material / section |
+| Key | Beam input | Diagrams / results | Material / section |
 | --- | --- | --- | --- |
-| `TAB` | Next page | Next page | Next page |
-| `↑` / `↓` | Choose field | Move result cursor | Choose field |
-| `←` / `→` | Change support preset | Change M / V / w | Change material or steel profile |
-| Numbers then `ENTER` | Apply numerical input | — | Apply b, h, or manual EI |
+| `TAB` | Diagrams | Material / section | Beam input |
+| `↑` / `↓` | Choose field | Move cursor; in results select L/250 or L/300 | Choose field |
+| `←` / `→` | Change support preset | Cycle M / V / w / results | Change material, profile or self-weight ON/OFF |
+| `ENTER` | Apply numerical input | Open results; in results **EXPORT CAS** | Apply input or toggle selection |
 
 In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in **kN·m²**. Numerical `EI` is editable when material is `MANUAL`. In the sections page, choose a material and either a steel profile or concrete dimensions. Use the calculator's normal document save command to retain settings.
+
+### Deflection comparison and self-weight
+
+The compact results view shows `|w|max` in **mm**, its position in **m**, `L/|w|` using consistent length units, and utilization `|w|max / (L / limit)` for both limits. Maxima include all segment boundaries and stationary points of the existing analytical deflection function; they do not depend on plot samples or cursor position. If equal absolute maxima exist, one maximizing position is reported. The selected comparison reports **OK**, **EXCEEDED**, or **N/A** for an undefined ratio (zero deflection). The default limit is L/250. These are user-selected comparison limits, not universal code-compliance certificates.
+
+Choose **Self-weight** on the section page and press `ENTER` or `←` / `→` to switch it ON/OFF. Steel uses `mass [kg/m] × 9.81 / 1000`; concrete uses `25 × (b/1000) × (h/1000)`, both in **kN/m**, positive downward. Input `q user` remains separate; each solve uses `q total = q user + q sw` only when ON. The results view shows available `q sw`, the ON/OFF state and the applied `q total`. With OFF, the displayed available self-weight is not added. Recalculation, section changes and restore never accumulate it. Manual EI or missing weight data show **N/A** and force self-weight OFF. Old saves default to OFF and L/250; both settings persist in new saves.
+
+Concrete results display **RC: GROSS EI ONLY**. No cracked stiffness, creep or long-term deflection is calculated.
+
+### CAS export
+
+On the results view, press `ENTER` at **EXPORT CAS**. After a successful solve, native [`var.store`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/variablelib/store.HTML) writes these numeric variables. Add or open **Calculator in the same TI-Nspire problem**, then enter a variable name such as `bx_wmax` to use it. The stable `bx_` namespace is overwritten only on explicit export; units are conventions for the numeric values, not attached CAS unit objects.
+
+| Variable | Meaning | Unit |
+| --- | --- | --- |
+| `bx_mmax` | Maximum signed bending moment | kNm |
+| `bx_mmin` | Minimum signed bending moment | kNm |
+| `bx_vabs` | Maximum absolute shear, including segment sides | kN |
+| `bx_wmax` | Maximum absolute deflection | mm |
+| `bx_xwmax` | Position of maximum absolute deflection | m |
+| `bx_ra` | Left vertical reaction | kN |
+| `bx_rb` | Right vertical reaction (zero at the free end, apart from roundoff) | kN |
+| `bx_ei` | Flexural rigidity used in the solve | kN·m² |
+
+**CAS: 8 variables stored** appears only if every store succeeds. API errors identify the failed variable; a partial export may have updated earlier variables. A failed calculation blocks export until a successful calculation. Previously exported CAS variables remain unchanged until another export.
 
 ## Example / sanity check
 
@@ -62,7 +97,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 ## Scope and limitations
 
 - **One span only.** Not a general 2D frame, continuous-beam, seismic or dynamic solver. No multiple load points, partial/trapezoidal UDL, thermal or prescribed displacements.
-- Linear, small-deflection, prismatic Euler–Bernoulli analysis; no self-weight is added automatically.
+- Linear, small-deflection, prismatic Euler–Bernoulli analysis; self-weight is included only when explicitly switched ON. No load combinations or resistance checks.
 - **Concrete:** `Ecm` with **gross uncracked** rectangular inertia only. Displayed deflections are **not** cracked/creep-adjusted reinforced-concrete service deflections. No reinforcement or EC2 design verification.
 - Steel profile values are nominal and not geometric/material strength checks; neither steel nor concrete code verification is performed.
 - Point loads extremely close to a support can trigger the existing ill-conditioning guard; a point at an exact end is supported.
@@ -75,26 +110,30 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 BeamCX/
 ├── src/
 │   ├── beam_core.lua       # Solver and result recovery
-│   ├── section_db.lua      # Offline materials, IPE / HEA Iy
+│   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/
 │   ├── test_port.py        # Beam calculations + UI smoke test
 │   ├── test_catalog.py     # EI, materials, inputs and persistence
 │   ├── test_plot_sign.py   # M/V/w plotting conventions
-│   └── test_arrows.py      # One filled arrowhead per load
+│   ├── test_arrows.py      # One filled arrowhead per load
+│   ├── test_quick_check.py # v0.3 harness
+│   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
 ├── CHANGELOG.md
 └── README.md
 ```
 
-The tests use Python standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. On-device runtime uses **TI-Lua 5.1**: automated CI is a compatibility-adjacent test, **not** a replacement for a real 5.1 interpreter or a physical-device check.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3, the full regression scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Canvas checks cover 320×240 and a reduced 320×212 app area, with approximate font widths. These checks do not replace physical-device validation.
 
 ## Data references
 
 - Concrete `Ecm` (30 / 31 / 33 GPa): [Betontechnische Daten](https://www.betontechnische-daten.de/de/betontechnologie/formaenderungen/elastische-verformung).
 - Steel modulus: `210 GPa` for both S235 and S355, standard EN 1993 elastic convention.
 - Nominal IPE / HEA strong-axis properties: [crosssections.app IPE](https://crosssections.app/en/guides/ipe-complete-guide) and [HEA](https://crosssections.app/en/hea). Values are statically embedded in `src/section_db.lua`.
+- Steel mass per metre: **ArcelorMittal, Sections and Merchant Bars, 2021 Sales Programme**, column `G [kg/m]`, IPE and HE A tables ([manufacturer PDF](https://sections.arcelormittal.com/repository2/Sections/Sections_MB_ArcelorMittal_FR_EN_RU.pdf), PDF pages 48/50 and 56/58). HE A corresponds to the app's HEA names. All 21 catalogue masses are embedded alongside the unchanged `Iy` values; e.g. IPE 200 = **22.4 kg/m**, HEA 200 = **42.3 kg/m**.
+- Concrete self-weight: documented nominal assumption **25 kN/m³** for normal-weight concrete sections, including a conventional reinforcement allowance. It is not inferred from concrete grade or reinforcement quantity.
 
 ## License
 

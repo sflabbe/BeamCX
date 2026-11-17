@@ -137,7 +137,7 @@ The Python tests use standard library `ctypes` to execute actual Lua code agains
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
 
 ## Development note
 

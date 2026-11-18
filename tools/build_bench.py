@@ -17,7 +17,7 @@ version=re.match(r'-- BeamCX ([^:]+):',source).group(1)
 sha=hashlib.sha256(source.encode()).hexdigest()
 assert source.rstrip().endswith('return Frame')
 source=source[:source.rfind('return Frame')].replace('local Frame = {}','Frame = {}',1)
-output='-- BeamCX independent benchmark P5A (generated).\n'+source
+output='-- BeamCX independent benchmark P5A.1 (generated).\n'+source
 output+=f'\nlocal BENCH_CORE_VERSION={version!r}\nlocal BENCH_CORE_SHA={sha!r}\n'
 preset=(root/'src/continuous_preset.lua').read_text()
 assert preset.rstrip().endswith('return ContinuousPreset')

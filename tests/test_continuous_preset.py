@@ -4,6 +4,7 @@ import ctypes
 import importlib.util
 from pathlib import Path
 import sys
+import random
 import subprocess
 
 root=Path(__file__).resolve().parent.parent
@@ -73,7 +74,7 @@ for _,case in ipairs(cases) do
     Frame.combine=function(s,f) combines=combines+1;return combine(s,f) end
     local result=assert(C.solve(p))
     Frame.solve,Frame.combine=solve,combine
-    assert(solves==#p.spans+1 and combines==3*2^#p.spans)
+    assert(solves==#p.spans+1 and combines==2)
     assert(result.factor_convention.status=='OPEN' and result.deflection_label=='w car.')
     for k in pairs(result.summary) do assert(not k:find('bx_',1,true)) end
     local F=(math.abs(p.g)+math.abs(p.q))*result.supports[#result.supports].position
@@ -301,6 +302,17 @@ local keys={};for key in pairs(errors) do keys[#keys+1]=key end;table.sort(keys)
 for _,key in ipairs(keys) do print(string.format('P5A MAX | %s | %.17g',key,errors[key])) end
 print('PASS P5A')
 '''
+# Deterministic identical random inputs for both real Lua runtimes.
+rng=random.Random(20261118)
+random_cases=[]
+for i in range(300):
+    n=2+i%4
+    random_cases.append(dict(spans=[2+8*rng.random() for _ in range(n)],
+        left=rng.choice(['PIN','FIX']),right=rng.choice(['PIN','FIX']),
+        g=0 if i%23==0 else 30*rng.random(),q=0 if i%17==0 else 30*rng.random(),
+        EI=5000+30000*rng.random(),gG_sup=1.35,gG_inf=1,gQ=1.5,limit=300 if i%3==0 else 250))
+script+='\ndo local random_cases='+builder.literal(random_cases)+'\n'
+script+=(root/'tests/continuous_bruteforce.lua').read_text()+'\nend\n'
 # Lua 5.4 and target Lua 5.1 execute this identical test chunk.
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--lua')

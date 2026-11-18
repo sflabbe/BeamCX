@@ -1,5 +1,7 @@
 # BeamCX v0.5 — P5A, cálculo de vigas continuas
 
+Informe histórico del cálculo exhaustivo inicial. El recorrido de patrones y sus tiempos están sustituidos por [P5A.1](VALIDATION_P5A1.md); la API actual añade Mmin por vano y Mmax por apoyo.
+
 2026-11-18. **P5A IMPLEMENTADO / PASS en PC.** Sin interfaz de vigas continuas, sin commit ni push. La aplicación v0.4.0 validada por el propietario sigue idéntica; P5B queda a cargo de interfaz, selector y validación en CX.
 
 ## Alcance y cambios autorizados

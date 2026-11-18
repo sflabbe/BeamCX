@@ -1,4 +1,4 @@
--- BeamCX independent benchmark P5A (generated).
+-- BeamCX independent benchmark P5A.1 (generated).
 -- BeamCX v0.4-P1C: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
 -- Units: m, kN, kNm; EA in kN, EI in kN*m^2. No TI API or Beam dependency.
 -- Global x right, y up, rotations CCW; downward loads are NEGATIVE.
@@ -911,15 +911,19 @@ function ContinuousPreset.model(p,case)
     end
     return m
 end
-local function pattern(mask,n)
-    local factors,names={1},{}
-    for i=1,n do
-        local active=math.floor(mask/2^(i-1))%2==1
-        factors[i+1]=active and 1 or 0
-        if active then names[#names+1]=tostring(i) end
-    end
-    return factors,#names>0 and table.concat(names,'-') or '-'
+-- Stable roots in the unit span coordinate; no sampling or iterative search.
+local function roots(a,b,c)
+    local scale=math.max(math.abs(a),math.abs(b),math.abs(c))
+    if scale==0 then return {} end
+    a,b,c=a/scale,b/scale,c/scale
+    if c==0 then return b==0 and {} or {-a/b} end
+    local d=b*b-4*a*c
+    if d<0 then return {} end
+    local q=-.5*(b+(b<0 and -1 or 1)*math.sqrt(d))
+    if q==0 then return {-b/(2*c)} end
+    return {q/c,a/q}
 end
+local function polynomial(poly,t) return poly[1]+t*(poly[2]+t*poly[3]) end
 local function record(value,x,offset,name,gamma)
     return {value=value,absolute=math.abs(value),x=x,position=offset+x,pattern=name,gammaG=gamma}
 end
@@ -951,9 +955,96 @@ local function solve(p)
         if (i==1 and x==0 and p.left=='PIN') or (i==n and x==p.spans[i] and p.right=='PIN') then return 0 end
         return v
     end
-    for mask=0,2^n-1 do
-        local active,name=pattern(mask,n)
-        local car,message=Core.combine(bases,active)
+    -- Scalar response envelopes select each contribution independently.
+    local function choose(values,maximum)
+        local gamma=p.gG_sup
+        if (maximum and p.gG_inf*values[1]>gamma*values[1]) or
+           (not maximum and p.gG_inf*values[1]<gamma*values[1]) then gamma=p.gG_inf end
+        local value=gamma*values[1]
+        local weights,names={gamma},{}
+        for j=2,#values do
+            local active=(maximum and values[j]>0) or (not maximum and values[j]<0)
+            weights[j]=active and p.gQ or 0
+            if active then value=value+p.gQ*values[j];names[#names+1]=tostring(j-1) end
+        end
+        return value,#names>0 and table.concat(names,'-') or '-',gamma,weights
+    end
+    for i,L in ipairs(p.spans) do
+        local polys={}
+        for j,base in ipairs(bases) do
+            local v=Core.at(base,i,0,'right')
+            local q=j==1 and p.g or (j-1==i and p.q or 0)
+            polys[j]={moment(v.M,0,i),v.V*L,convert(q)*L^2/2}
+        end
+        local function values_at(t)
+            local values={}
+            for j,poly in ipairs(polys) do values[j]=moment(polynomial(poly,t),t*L,i) end
+            return values
+        end
+        -- Cuts at every base zero make both the Qi set and the gammaG fixed.
+        local cuts={0,1}
+        for _,poly in ipairs(polys) do
+            for _,t in ipairs(roots(poly[1],poly[2],poly[3])) do
+                if t>0 and t<1 then cuts[#cuts+1]=t end
+            end
+        end
+        table.sort(cuts)
+        local function candidate(t,maximum)
+            local value,name,gamma=choose(values_at(t),maximum)
+            local key=maximum and 'Mmax' or 'Mmin'
+            out.spans[i][key]=update(out.spans[i][key],record(value,t*L,offsets[i],name,gamma),maximum)
+        end
+        for k=1,#cuts-1 do
+            local left,right=cuts[k],cuts[k+1]
+            if right>left then
+                for _,maximum in ipairs{true,false} do
+                    local _,_,_,weights=choose(values_at((left+right)/2),maximum)
+                    local b,c=0,0
+                    for j,poly in ipairs(polys) do b=b+weights[j]*poly[2];c=c+weights[j]*poly[3] end
+                    candidate(left,maximum);candidate(right,maximum)
+                    if c~=0 then
+                        local vertex=-b/(2*c)
+                        if vertex>left and vertex<right then candidate(vertex,maximum) end
+                    end
+                end
+            end
+        end
+        -- Shear is linear on each full-UDL span: its absolute envelope peaks at an end.
+        for _,x in ipairs{0,L} do
+            local values={}
+            for j,base in ipairs(bases) do values[j]=Core.at(base,i,x,x==0 and 'right' or 'left').V end
+            for _,maximum in ipairs{true,false} do
+                local v,name,gamma=choose(values,maximum)
+                out.shear=update(out.shear,record(math.abs(v),x,offsets[i],name,gamma),true)
+            end
+        end
+    end
+    for node=1,n+1 do
+        local i=node==1 and 1 or node-1
+        local x=node==1 and 0 or p.spans[i]
+        local M,R={},{}
+        for j,base in ipairs(bases) do
+            M[j]=moment(Core.at(base,i,x,x==0 and 'right' or 'left').M,x,i)
+            R[j]=base.reactions[node].Ry
+        end
+        for _,field in ipairs{{'M',M},{'R',R}} do
+            for _,maximum in ipairs{true,false} do
+                local value,name,gamma=choose(field[2],maximum)
+                out.supports[node][field[1]..(maximum and 'max' or 'min')]=record(value,0,offsets[node],name,gamma)
+            end
+        end
+    end
+    -- Characteristic deflection: two alternating patterns, a verified rule,
+    -- not a theorem. The exhaustive comparison belongs only to the test harness.
+    for parity=1,2 do
+        local factors,names={1},{}
+        for i=1,n do
+            local active=i%2==parity%2
+            factors[i+1]=active and 1 or 0
+            if active then names[#names+1]=tostring(i) end
+        end
+        local name=table.concat(names,'-')
+        local car,message=Core.combine(bases,factors)
         if not car then return nil,message end
         for i,L in ipairs(p.spans) do
             local lo,xlo,hi,xhi=Core.deflection_extrema(car,i)
@@ -963,32 +1054,6 @@ local function solve(p)
             local d=out.spans[i].deflection
             d.down=update(d.down,record(math.max(0,convert(lo)),xlo,offsets[i],name),true)
             d.up=update(d.up,record(math.min(0,convert(hi)),xhi,offsets[i],name),false)
-        end
-        for _,gamma in ipairs{p.gG_sup,p.gG_inf} do
-            local factors={gamma}
-            for j=1,n do factors[j+1]=p.gQ*active[j+1] end
-            local sol,message=Core.combine(bases,factors)
-            if not sol then return nil,message end
-            for i,L in ipairs(p.spans) do
-                local lo,xlo,hi,xhi=Core.moment_extrema(sol,i)
-                xlo=math.max(0,math.min(L,xlo));xhi=math.max(0,math.min(L,xhi))
-                hi=moment(hi,xhi,i)
-                out.spans[i].Mmax=update(out.spans[i].Mmax,record(hi,xhi,offsets[i],name,gamma),true)
-                for _,s in ipairs{0,L} do
-                    local v=Core.at(sol,i,s,s==0 and 'right' or 'left').V
-                    out.shear=update(out.shear,record(math.abs(v),s,offsets[i],name,gamma),true)
-                end
-            end
-            for j=1,n+1 do
-                local i=j==1 and 1 or j-1
-                local x=j==1 and 0 or p.spans[i]
-                local M=moment(Core.at(sol,i,x,x==0 and 'right' or 'left').M,x,i)
-                local support=out.supports[j]
-                support.Mmin=update(support.Mmin,record(M,0,offsets[j],name,gamma),false)
-                local R=sol.reactions[j].Ry
-                support.Rmax=update(support.Rmax,record(R,0,offsets[j],name,gamma),true)
-                support.Rmin=update(support.Rmin,record(R,0,offsets[j],name,gamma),false)
-            end
         end
     end
     local Mmax,Mmin,Rmax,Wmax,Xw=-math.huge,math.huge,-math.huge,0,0
@@ -1000,7 +1065,7 @@ local function solve(p)
         d.utilization={L250=d.governing.absolute/(span.length/250),L300=d.governing.absolute/(span.length/300)}
         d.selected_limit=p.limit
         d.status=not d.ratio and 'N/A' or (d.governing.absolute/(span.length/p.limit)<=1+1e-12 and 'OK' or 'EXCEEDED')
-        Mmax=math.max(Mmax,span.Mmax.value)
+        Mmax=math.max(Mmax,span.Mmax.value);Mmin=math.min(Mmin,span.Mmin.value)
         if d.governing.absolute>Wmax then Wmax=d.governing.absolute;Xw=d.governing.position end
     end
     for _,s in ipairs(out.supports) do Mmin=math.min(Mmin,s.Mmin.value);Rmax=math.max(Rmax,s.Rmax.value) end
@@ -1013,14 +1078,13 @@ local function solve(p)
         while i<n and (x>offsets[i+1] or (x==offsets[i+1] and side=='right')) do i=i+1 end
         local s=x-offsets[i]
         local limit=side or (x==0 and 'right' or 'left')
-        local G=Core.at(bases[1],i,s,limit)
-        local values={Mmax=math.max(p.gG_sup*G.M,p.gG_inf*G.M),Mmin=math.min(p.gG_sup*G.M,p.gG_inf*G.M),
-            Vmax=math.max(p.gG_sup*G.V,p.gG_inf*G.V),Vmin=math.min(p.gG_sup*G.V,p.gG_inf*G.V)}
-        for j=2,#bases do
-            local Q=Core.at(bases[j],i,s,limit)
-            values.Mmax=values.Mmax+p.gQ*math.max(0,Q.M);values.Mmin=values.Mmin+p.gQ*math.min(0,Q.M)
-            values.Vmax=values.Vmax+p.gQ*math.max(0,Q.V);values.Vmin=values.Vmin+p.gQ*math.min(0,Q.V)
+        local moments,shears={},{}
+        for j,base in ipairs(bases) do
+            local v=Core.at(base,i,s,limit)
+            moments[j]=moment(v.M,s,i);shears[j]=v.V
         end
+        local values={Mmax=choose(moments,true),Mmin=choose(moments,false),
+            Vmax=choose(shears,true),Vmin=choose(shears,false)}
         return values
     end
     return out
@@ -1032,7 +1096,7 @@ end
 -- Independent CX benchmark; bundled by tools/build_bench.py, not build.py.
 -- Official TI API: timer.getMilliSecCounter(), wraps at 2^32 ms.
 -- https://education.ti.com/html/webhelp/EG_TINspireLUA/EN/content/libraries/timerlib/getmilliseccounter.htm
-local Bench={version=BENCH_CORE_VERSION or 'Frame (unbundled)',sha=BENCH_CORE_SHA or '',rows={}}
+local Bench={version='P5A.1 '..(BENCH_CORE_VERSION or 'Frame (unbundled)'),sha=BENCH_CORE_SHA or '',rows={}}
 local function clock_ms()
     if timer and timer.getMilliSecCounter then return timer.getMilliSecCounter() end
     if os and os.clock then return os.clock()*1000 end -- PC reference only.
@@ -1064,7 +1128,7 @@ Bench.cases={{name='simple q+P',model=continuous(1)},
              {name='synthetic 20',model=continuous(19,true)},
              {name='synthetic 40',model=continuous(39,true)},
              {name='synthetic 60',model=continuous(59,true)}}
--- P5A complete envelopes, including n+1 bases, all ULS/SLS patterns and extrema.
+-- P5A.1 complete envelopes: n+1 bases, exact ULS pieces and two SLS patterns.
 for n=2,5 do
     local lengths={4,6,5,3,7}
     local spans={};for i=1,n do spans[i]=lengths[i] end

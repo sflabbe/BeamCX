@@ -1,7 +1,7 @@
 -- Independent CX benchmark; bundled by tools/build_bench.py, not build.py.
 -- Official TI API: timer.getMilliSecCounter(), wraps at 2^32 ms.
 -- https://education.ti.com/html/webhelp/EG_TINspireLUA/EN/content/libraries/timerlib/getmilliseccounter.htm
-local Bench={version=BENCH_CORE_VERSION or 'Frame (unbundled)',sha=BENCH_CORE_SHA or '',rows={}}
+local Bench={version='P5A.1 '..(BENCH_CORE_VERSION or 'Frame (unbundled)'),sha=BENCH_CORE_SHA or '',rows={}}
 local function clock_ms()
     if timer and timer.getMilliSecCounter then return timer.getMilliSecCounter() end
     if os and os.clock then return os.clock()*1000 end -- PC reference only.
@@ -33,7 +33,7 @@ Bench.cases={{name='simple q+P',model=continuous(1)},
              {name='synthetic 20',model=continuous(19,true)},
              {name='synthetic 40',model=continuous(39,true)},
              {name='synthetic 60',model=continuous(59,true)}}
--- P5A complete envelopes, including n+1 bases, all ULS/SLS patterns and extrema.
+-- P5A.1 complete envelopes: n+1 bases, exact ULS pieces and two SLS patterns.
 for n=2,5 do
     local lengths={4,6,5,3,7}
     local spans={};for i=1,n do spans[i]=lengths[i] end

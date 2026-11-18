@@ -158,6 +158,12 @@ for _,case in ipairs(cases) do
         eq('D uplift regression',result.spans[1].deflection.governing.absolute,4.20398173154e-4,ws)
         assert(result.spans[1].deflection.governing.pattern=='2')
     elseif p.name=='E' then
+        assert(math.min(math.abs(summary.deflection_position-2.75420947417),
+            math.abs(summary.deflection_position-15.24579052583))<1e-9)
+        local i=summary.deflection_position<6 and 1 or 3
+        local selected=result.spans[i].deflection.governing
+        eq('E governing position reaches maximum',-Frame.at(direct(p,selected.pattern,1,true),i,selected.x).w,
+            summary.deflection_absolute_max,ws)
         eq('E symmetry M',result.spans[1].Mplus.value,result.spans[3].Mplus.value,ms)
         eq('E symmetry w',result.spans[1].deflection.down.value,result.spans[3].deflection.down.value,ws)
         eq('E symmetry supports',result.supports[2].Mmin.value,result.supports[3].Mmin.value,ms)
@@ -166,7 +172,15 @@ for _,case in ipairs(cases) do
     end
     print(string.format('PASS %s: all %d patterns, two global gammaG; 101 points/span; signed w and governing pattern; solves=%d combines=%d',p.name,2^#p.spans,solves,combines))
 end
--- PIN-FIX is the mirrored FIX-PIN witness; the application still has no UI path.
+-- A clearly larger third-span deflection must override the first-span result.
+local asymmetric=assert(C.solve{spans={4,5,8},left='PIN',right='PIN',g=10,q=5,EI=10000})
+local third=asymmetric.spans[3].deflection.governing
+assert(third.absolute>1.1*asymmetric.spans[1].deflection.governing.absolute)
+assert(third.absolute>1.1*asymmetric.spans[2].deflection.governing.absolute)
+assert(asymmetric.summary.deflection_position==third.position and third.position>9)
+assert(asymmetric.summary.deflection_absolute_max==third.absolute)
+print('PASS global deflection positions: E symmetric maximum; asymmetric 4/5/8 selects span 3')
+-- PIN-FIX is the mirrored FIX-PIN witness.
 local mirror=copy(cases[1].p);mirror.spans={5,6,4};mirror.left='PIN';mirror.right='FIX'
 local mirrored=assert(C.solve(mirror))
 for i=1,3 do

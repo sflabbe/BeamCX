@@ -95,6 +95,7 @@ function gc:drawLine() end
 function gc:fillRect() end
 function gc:fillPolygon() end
 function gc:setFont(face,style,size) self.font=size end
+function gc:getStringWidth(t) return #t*(self.font==9 and 6 or 7) end
 function gc:drawString(t,x,y)
     assert(x>=0 and y>=0 and y+self.font+3<=height,'text exceeds canvas: '..t)
     -- Conservative approximate glyph widths; hardware metrics still need a device.
@@ -151,11 +152,6 @@ eq(on.save().mode,4);eq(on.save().settings.limit,300)
 contains('L/300: OK')
 on.arrowRight();eq(on.save().mode,1)
 on.arrowLeft();eq(on.save().mode,4)
--- Older saves have no settings and must reset both new settings to defaults.
-local legacy=on.save();legacy.settings=nil
-on.restore(legacy)
-assert(not on.save().settings.self_weight);eq(on.save().settings.limit,250)
-
 -- Turn self-weight on using the actual section-page selector.
 on.restore(initial);go(3)
 for i=1,4 do on.arrowRight() end -- MANUAL -> S235
@@ -174,7 +170,7 @@ for i=1,3 do
     eq(on.save().params.q,10)
 end
 -- Change profile while ON, then recalculate q_user through the keyboard.
-go(3);on.arrowUp();on.arrowRight() -- IPE 220
+go(3);for i=1,8 do on.arrowUp() end;on.arrowDown();on.arrowRight() -- IPE 220
 local sw220=26.2*9.81/1000
 go(1);on.arrowDown();on.arrowDown();edit('-1') -- q user
 assert(on.save().settings.self_weight);eq(on.save().params.q,-1)
@@ -215,7 +211,7 @@ local ui_mass=_G.DB.profiles[6][3];_G.DB.profiles[6][3]=nil
 on.restore(missing);assert(not on.save().settings.self_weight)
 contains('SW N/A | q sw=N/A kN/m')
 _G.DB.profiles[6][3]=ui_mass
-print('PASS: actual UI self-weight ON/OFF, sign, section change, no accumulation, legacy and new persistence, canvas bounds')
+print('PASS: actual UI self-weight ON/OFF, sign, section change, no accumulation, current persistence, canvas bounds')
 
 -- Export uses signed solver extrema and actual reactions for all presets.
 for support=1,4 do
@@ -240,16 +236,24 @@ eq(count(stores),4)
 var.store=function() error('store exception',0) end
 on.enterKey();contains('CAS ERROR bx_mmax: store exception')
 var=nil;on.enterKey();contains('CAS ERROR: API unavailable')
--- Failed restore and rejected numerical calculation both invalidate old results.
+-- Any invalid saved field discards the entire document, with a visible notice.
 local called=0
 var={store=function() called=called+1 end}
 local bad=on.save();bad.params.L=0;bad.page=2;bad.mode=4
-on.restore(bad);on.enterKey();eq(called,0)
-contains('invalid beam dimensions, rigidity or loads')
--- Valid recovery, then invalid edit: no stale result exports.
+on.restore(bad)
+local defaults=on.save()
+assert(defaults.page==0 and defaults.mode==1 and defaults.cursor==.5)
+assert(defaults.params.L==6 and defaults.params.q==10 and defaults.params.P==0 and defaults.params.support==1)
+assert(defaults.section.material==1 and defaults.section.profile==6)
+assert(not defaults.settings.self_weight and defaults.settings.limit==250)
+contains('Documento no válido o de otra versión:');contains('valores por defecto')
+eq(called,0)
+-- A rejected numerical EDIT must not export the old result.
 local recovered=on.save();recovered.params.L=6;recovered.page=1
 on.restore(recovered)
--- edit_index was q above; move up once to L, reject zero.
-on.arrowUp();edit('0');on.tabKey();eq(on.save().page,1);eq(called,0)
+-- Restore resets focus to Supports; explicitly navigate to L and reject zero.
+called=0
+on.arrowDown();edit('0');on.tabKey();eq(on.save().page,1);eq(called,0)
+on.enterKey();eq(called,0)
 contains('invalid beam dimensions, rigidity or loads')
 print('PASS: CAS names/units/solver values, all supports, returned errors, exceptions, missing API, failed-solve blocking')

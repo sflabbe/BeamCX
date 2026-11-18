@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+- Added CONTINUA to a 3×2 selector with five cards, support schemes, normalized M silhouettes, empty-cell navigation and transactional rollback.
+- Added scrolling 2–5-span input, PIN/FIX ends, g/q and editable γ factors. Shared sections provide EI and self-weight, added once to g. Per-span deflection comparison uses L/250 or L/300.
+- Continuous edits invalidate results; results entry displays Calculando… and defers calculation to on.timer. Plots use a stored 20-interval-per-span cache including both support sides. Cursor movement queries the exact envelope once. No solve or envelope query occurs during painting.
+- Added M/V envelopes, odd/even characteristic w curves, span/support tables and eight bc_* CAS exports; bc_wmax is in mm. The γ convention remains OPEN (EN 1990 A1 + NA). Single-span behavior and all eight bx_* exports are retained.
+- P5B-R1 persistence accepts only a complete valid 0.5.0 document. Any invalid field or other version resets the entire document to defaults at page 0, with a notice until the first key action. No v0.4 migration or persisted input focus. Continuous restore waits for results entry before calculation.
+- P5B-R1 preserves ContinuousPreset and Frame, including Frame.combine. Case E accepts either symmetric maximum position and verifies that the exported position equals the summary and attains the characteristic maximum.
+- All 13 suites pass under Lua 5.1.5 and 5.4.7, including the exact local CI sequence, 394 Frame rows, 2042 golden cases and P5A.1 brute force over 300 models. Package: 28765 bytes, final USB packet 193 bytes. Owner calculator acceptance remains pending; see VALIDATION_P5B.md.
+
 ## 0.4.0
 - Activated the single productive FEA route: section EI/self-weight → `BeamPreset.model` → `Frame.solve` → Frame recovery/extrema → preset summary → UI/CAS. Removed the legacy numerical solver and its build dependency.
 - Retained the four existing single-span presets, selector transactions, input/catalog/manual EI, signed loads and arrows, M/V/w diagrams/cursor, analytical extrema, L/250 and L/300 comparisons, concrete cantilever `2.5L`, `AGREE LIMIT`, and all eight CAS values. Continuous beams and frames remain engine capabilities only.

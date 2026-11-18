@@ -202,15 +202,15 @@ unchanged(before,state(),false)
 assert(state().selector_error=='different candidate error' and state().err==before.err)
 print('PASS: failed Enter restores exact result/summary identity, EI, old error, CAS message, weight and page; retry succeeds')
 
--- 8. Restore page 0 focuses the confirmed support; legacy pages remain intact.
+-- 8. Current documents retain their page; invalid documents reset completely.
 fresh()
 local zero=on.save();zero.params.support=4;zero.page=0
 on.restore(zero)
 assert(state().page==0 and state().sel_index==4 and state().support==4)
 for _,page in ipairs{1,2,3} do
-    local legacy=on.save();legacy.page=page;legacy.settings=nil
-    on.restore(legacy)
-    assert(on.save().page==page,'legacy page must not be forced to selector')
+    local current=on.save();current.page=page
+    on.restore(current)
+    assert(on.save().page==page,'valid current page must be retained')
 end
 for _,invalid in ipairs{7,'x'} do
     local restored=on.save();restored.page=invalid
@@ -221,7 +221,7 @@ for _,invalid in ipairs{7,'x'} do
     on.enterKey();assert(on.save().page==1)
     on.tabKey();on.tabKey();assert(on.save().page==3)
 end
-print('PASS: selector restore, legacy pages and invalid page recovery')
+print('PASS: current selector/pages restore and invalid document recovery')
 
 -- P3. Invalid text leaves the confirmed model valid. Idle Esc clears its error,
 -- then the same confirmed system can be reopened and exported normally.

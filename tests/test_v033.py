@@ -25,7 +25,8 @@ local function eq(a,b)
 end
 local function contains(text,fragment) return string.find(text,fragment,1,true)~=nil end
 local function model(support,material,q,P,page,mode)
-    return {params={L=6,q=q or 10,P=P or 0,a=3,EI=10000,support=support},
+    return {format='0.5.0',continuous=on.save().continuous,
+        params={L=6,q=q or 10,P=P or 0,a=3,EI=10000,support=support},
         section={material=material or 1,profile=10,b=250,h=450,manualEI=10000},
         settings={self_weight=false,limit=250},page=page or 2,mode=mode or 1,cursor=0.5}
 end

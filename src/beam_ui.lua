@@ -9,6 +9,7 @@ local units={'','m','kN/m','kN','m','kN*m2'}
 local page=0 -- 0 system selector, 1 beam input, 2 diagram, 3 sections
 local sel_index=params.support -- temporary focus; params.support is authoritative
 local selector_error=nil
+local restore_notice=nil
 local mode=1 -- 1 M, 2 V, 3 w, 4 compact results (inside page 2)
 local edit_index,sec_index=1,1
 local typing=nil
@@ -474,7 +475,11 @@ local function draw_selector(gc,w,h)
         end
     end
     gc:setFont('sansserif','r',9)
-    if selector_error then
+    if restore_notice then
+        color(gc,255,200,112)
+        label(gc,'Documento no válido o de otra versión:',8,h-42)
+        label(gc,'valores por defecto',8,h-29)
+    elseif selector_error then
         color(gc,255,140,120)
         local message=selector_error
         while #message>0 and gc:getStringWidth(message)>w-16 do
@@ -785,7 +790,11 @@ local function step_selection(d)
         end
     end
 end
+local function dismiss_restore_notice()
+    if restore_notice then restore_notice=nil;redraw() end
+end
 function on.tabKey()
+    dismiss_restore_notice()
     if page==0 then return end
     commit()
     if result or params.support==5 then
@@ -797,6 +806,7 @@ function on.tabKey()
     redraw()
 end
 function on.enterKey()
+    dismiss_restore_notice()
     if page==0 then open_selected_system();redraw();return end
     if page==1 then
         if params.support==5 then
@@ -814,6 +824,7 @@ function on.enterKey()
     redraw()
 end
 function on.charIn(ch)
+    dismiss_restore_notice()
     if page==0 then return end
     local can=false
     if page==1 and params.support==5 then
@@ -832,11 +843,13 @@ function on.charIn(ch)
     end
 end
 function on.backspaceKey()
+    dismiss_restore_notice()
     if page==0 then return end
     if typing and #typing>0 then typing=string.sub(typing,1,-2) end
     redraw()
 end
 function on.escapeKey()
+    dismiss_restore_notice()
     if page==0 then return end
     if typing~=nil then typing=nil;err=nil
     else
@@ -872,6 +885,7 @@ local function move_continuous_cursor(d)
     if x~=old then cursor=x/total;cache_cursor() end
 end
 function on.arrowUp()
+    dismiss_restore_notice()
     if page==0 then
         if sel_index>3 then sel_index=sel_index-3 end
         redraw();return
@@ -892,6 +906,7 @@ function on.arrowUp()
     redraw()
 end
 function on.arrowDown()
+    dismiss_restore_notice()
     if page==0 then
         if sel_index<=3 then sel_index=math.min(5,sel_index+3) end
         redraw();return
@@ -912,6 +927,7 @@ function on.arrowDown()
     redraw()
 end
 function on.arrowLeft()
+    dismiss_restore_notice()
     if page==0 then
         if (sel_index-1)%3>0 then sel_index=sel_index-1 end
         redraw();return
@@ -921,6 +937,7 @@ function on.arrowLeft()
     redraw()
 end
 function on.arrowRight()
+    dismiss_restore_notice()
     if page==0 then
         if (sel_index-1)%3<2 and sel_index<5 then sel_index=sel_index+1 end
         redraw();return
@@ -935,58 +952,54 @@ function on.save()
         continuous=copy(continuous),page=page,mode=mode,cursor=cursor,
         settings=copy(settings)}
 end
+local function valid_document(data)
+    if type(data)~='table' or data.format~='0.5.0' then return false end
+    local p,s,c,t=data.params,data.section,data.continuous,data.settings
+    if type(p)~='table' or type(s)~='table' or type(c)~='table' or type(t)~='table' then return false end
+    local function integer(v,lo,hi) return finite(v) and v%1==0 and v>=lo and v<=hi end
+    if not integer(data.page,0,3) or not integer(data.mode,1,4)
+       or not finite(data.cursor) or data.cursor<0 or data.cursor>1 then return false end
+    if not integer(p.support,1,5) or not finite(p.L) or p.L<=0
+       or not finite(p.EI) or p.EI<=0 or not finite(p.q) or not finite(p.P)
+       or not finite(p.a) or p.a<0 or p.a>p.L then return false end
+    if not integer(s.material,1,#SectionDB.materials)
+       or not integer(s.profile,1,#SectionDB.profiles) then return false end
+    for _,key in ipairs{'b','h','manualEI'} do
+        if not finite(s[key]) or s[key]<=0 then return false end
+    end
+    local info=SectionDB.compute(s)
+    if not info or not finite(info.EI) or info.EI<=0 then return false end
+    if type(t.self_weight)~='boolean' or (t.limit~=250 and t.limit~=300) then return false end
+    if type(c.spans)~='table' or not integer(#c.spans,2,ContinuousPreset.MAX_SPANS) then return false end
+    for key in pairs(c.spans) do if not integer(key,1,#c.spans) then return false end end
+    for i=1,#c.spans do if not finite(c.spans[i]) or c.spans[i]<=0 then return false end end
+    if (c.left~='PIN' and c.left~='FIX') or (c.right~='PIN' and c.right~='FIX') then return false end
+    if not finite(c.g) or not finite(c.q) then return false end
+    for _,key in ipairs{'gG_sup','gG_inf','gQ'} do
+        if not finite(c[key]) or c[key]<=0 then return false end
+    end
+    return true
+end
 function on.restore(data)
     if calculating then timer.stop() end
-    -- Only this release's format is accepted; reset before validating fields.
-    if type(data)~='table' or data.format~='0.5.0' then data={} end
+    local valid=valid_document(data)
     params=copy(default_params);section=copy(default_section);continuous=copy(default_continuous)
     settings={self_weight=false,limit=250}
     page=0;mode=1;cursor=.5;table_page=1;edit_index=1;sec_index=1;edit_top=1;sec_top=1
-    typing=nil;selector_error=nil;selection_before=nil
+    typing=nil;selector_error=nil;selection_before=nil;restore_notice=nil
     dirty()
-    local function integer(v,lo,hi) return finite(v) and v%1==0 and v>=lo and v<=hi end
-    if type(data.settings)=='table' then
-        settings.self_weight=data.settings.self_weight==true
-        if data.settings.limit==300 then settings.limit=300 end
-    end
-    if type(data.section)=='table' then
-        local s=data.section
-        if integer(s.material,1,#SectionDB.materials) then section.material=s.material end
-        if integer(s.profile,1,#SectionDB.profiles) then section.profile=s.profile end
-        for _,key in ipairs{'b','h','manualEI'} do
-            if finite(s[key]) and s[key]>0 then section[key]=s[key] end
-        end
-        local info=sec_info()
-        if not info or not finite(info.EI) or info.EI<=0 then section=copy(default_section) end
-    end
-    if type(data.params)=='table' then
-        local p=data.params
-        if integer(p.support,1,5) then params.support=p.support end
-        if finite(p.L) and p.L>0 then params.L=p.L end
-        for _,key in ipairs{'q','P'} do if finite(p[key]) then params[key]=p[key] end end
-        params.a=math.min(default_params.a,params.L)
-        if finite(p.a) and p.a>=0 and p.a<=params.L then params.a=p.a end
-    end
-    if type(data.continuous)=='table' then
-        local c=data.continuous
-        if type(c.spans)=='table' and integer(#c.spans,2,ContinuousPreset.MAX_SPANS) then
-            continuous.spans={}
-            for i=1,#c.spans do
-                continuous.spans[i]=finite(c.spans[i]) and c.spans[i]>0 and c.spans[i] or 6
-            end
-        end
-        for _,key in ipairs{'left','right'} do
-            if c[key]=='PIN' or c[key]=='FIX' then continuous[key]=c[key] end
-        end
-        for _,key in ipairs{'g','q','gG_sup','gG_inf','gQ'} do
-            if finite(c[key]) and ((key=='g' or key=='q') or c[key]>0) then continuous[key]=c[key] end
-        end
+    if valid then
+        params=copy(data.params);section=copy(data.section);continuous=copy(data.continuous)
+        settings=copy(data.settings)
+    else
+        restore_notice='Documento no válido o de otra versión: valores por defecto'
     end
     recalc()
-    if integer(data.page,0,3) then page=data.page end
-    if integer(data.mode,1,4) then mode=data.mode end
-    if finite(data.cursor) and data.cursor>=0 and data.cursor<=1 then cursor=data.cursor end
-    -- A saved results page opens at input: entry to results schedules the solve.
-    if params.support==5 and page==2 then page=1 end
+    if valid then
+        page=data.page;mode=data.mode;cursor=data.cursor
+        -- Results reopen at input; no continuous solve until the user enters results.
+        if params.support==5 and page==2 then page=1 end
+    end
     sel_index=params.support
+    redraw()
 end

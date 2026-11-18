@@ -1,21 +1,21 @@
 # BeamCX
 
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
-TI-Lua 5.1 app for one prismatic beam span, with support presets, load diagrams, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
+TI-Lua 5.1 app for single-span and continuous prismatic beams, with support presets, load envelopes, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.4.0 — Productive FEA**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.5.0 — Continuous beams**. A small teaching / engineering-check tool, **not** a design-code verifier.
 
-The application now uses one numerical engine: `BeamPreset → Frame.solve`, followed by Frame recovery and analytical extrema. The four existing single-span presets remain the selectable systems. Continuous beams and frames are capabilities of the underlying engine only; they are not selectable application features. The legacy solver has been removed. Existing v0.3.3 saved documents retain their input, section, system, page and settings contract.
+The application uses one numerical engine: `BeamPreset → Frame.solve` for the four single-span systems and `ContinuousPreset → Frame.solve / Frame.combine` for **CONTINUA**. Single-span calculation remains immediate. Continuous beams use deferred calculation and cached plots. Only complete, valid **0.5.0** saved documents are accepted; other versions or any invalid field reset the whole document to defaults with a selector notice. There is no migration of v0.4 documents.
 
 ## Features
 
-- One horizontal span with four boundary-condition presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned.
-- Visual 2×2 system selector with compact supports and reference bending-moment silhouettes for a downward uniform load (`q>0`). These silhouettes illustrate the four support cases; they are not results from the current model.
+- Four single-span presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned; plus **CONTINUA** with **2–5 spans**, PIN/FIX ends and one shared EI.
+- Visual 3×2 system selector with five cards and an empty sixth position; navigation skips the empty position. Each card has compact supports and a reference bending-moment silhouette for a downward uniform load (`q>0`). These silhouettes illustrate the support cases; they are not results from the current model.
 - Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards, negative loads upwards. Distributed-load arrows follow the calculated total load, including enabled self-weight.
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
 - Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
 - Optional automatic self-weight from steel catalogue mass or concrete rectangle dimensions; **OFF by default**.
-- Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem.
+- Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem: `bx_*` for single-span beams, `bc_*` for continuous beams.
 - **Plot convention:** sagging moment `M > 0` is drawn *below* the reference line, hogging `M < 0` *above* it.
 - Offline `EI` input or automatic `EI = E × I` via:
   - Concrete **C20/25, C25/30, C30/37** and editable gross rectangular section `b × h` in mm.
@@ -74,11 +74,13 @@ Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.7
 
 **v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
 
-**v0.4.0 is validated on the CX CAS by the owner.** P5A leaves that application unchanged; continuous-beam UI and hardware acceptance belong to P5B. See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
+**v0.4.0 is validated on the CX CAS by the owner.** The v0.5.0 continuous-beam UI requires owner testing: case E, five-span calculation time, cursor responsiveness, `bc_*` export and persistence. See [P5B validation](VALIDATION_P5B.md). See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
 
 ## Keys
 
-New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press `ENTER` to confirm the system and open beam input. A failed calculation keeps the previous confirmed model and leaves the selector open with an error. `ESC` returns to the selector; while entering a number, the first `ESC` only cancels that edit. Documents saved on an existing input, diagram or section page reopen on that page.
+The table below describes the single-span pages; CONTINUA controls follow it.
+
+New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press `ENTER` to confirm the system and open beam input. A failed calculation keeps the previous confirmed model and leaves the selector open with an error. `ESC` returns to the selector; while entering a number, the first `ESC` only cancels that edit. Valid current documents reopen on their saved page, except continuous results reopen at input and wait for the user to enter results. Input/section focus is reset and is not part of the saved document. Invalid documents open at the default selector with “Documento no válido o de otra versión: valores por defecto” until the first key action.
 
 | Key | System selector | Beam input | Diagrams / results | Material / section |
 | --- | --- | --- | --- | --- |
@@ -90,6 +92,33 @@ New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press
 
 In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in **kN·m²**. Numerical `EI` is editable when material is `MANUAL`; catalogue EI displays `(auto)` beside its value. In the sections page, choose a material and either a steel profile or concrete dimensions. Use the calculator's normal document save command to retain settings.
 
+### CONTINUA
+
+Select **CONTINUA** and press `ENTER`. Use `↑` / `↓` to scroll the input list. `←` / `→` changes the number of spans (2–5, default 3) and PIN/FIX end supports. Type a number and press `ENTER` for each span length, g, q and the three factors. Lengths must be positive; added spans copy the last retained length. Defaults are 6 m per span, PIN–PIN, g=10 and q=5 kN/m, γG,sup=1.35, γG,inf=1.00 and γQ=1.50.
+
+Edits mark the result **Desactualizado** and discard the plot cache. `TAB` enters results, displays **Calculando…**, and schedules calculation in a short timer; painting never solves. On completion, approximately 20 points per span and both sides of each internal support are stored once. Repainting and switching result modes use this cache. `↑` / `↓` moves the cursor over the total length, including each support, with one exact envelope query per movement. Shear readings at internal supports show both sides.
+
+Use `←` / `→` to cycle **M envelope**, **V envelope**, **characteristic w** and **compact table**. Positive M is below the axis. V includes support jumps. The w plot shows the two characteristic odd/even load patterns, positive downward, in mm. This deflection rule is verified against exhaustive test cases; it is not a theorem for all beam configurations. In the table, `↑` / `↓` selects spans or supports. Span rows show L, positive M maximum (or —), governing w with ↓/↑, L/|w| and status; support rows show Mmin, positive Mmax when present, Rmax and Rmin. Global |V|max and the actual factors appear below both tables.
+
+`TAB` from results opens the shared material/section page. EI and self-weight use the same catalogue as single-span beams. Enabled self-weight is added **once to g**, never to q. Select **Limite flecha** there to choose L/250 or L/300; each span uses its own length as Lref. `TAB` returns to input. Continuous calculation runs only on entering results after an edit.
+
+The displayed factor convention is **γ: OPEN (EN 1990 A1 + NA)**. Factors are editable project inputs; their defaults do not establish compliance with EN 1990 Annex A1 or the applicable National Annex. Moment, shear and reaction envelopes use favorable/unfavorable contributions and both global γG choices. Characteristic w uses unit factors.
+
+On the compact table, `ENTER` exports only these eight variables; the single-span `bx_*` namespace is unchanged and is exported only in that mode:
+
+| Variable | Meaning | Unit |
+| --- | --- | --- |
+| `bc_mmax` | Global algebraic M maximum | kNm |
+| `bc_mmin` | Global M minimum | kNm |
+| `bc_vabs` | Global maximum absolute shear | kN |
+| `bc_rmax` | Maximum support reaction | kN |
+| `bc_wmax` | Governing absolute characteristic deflection | **mm** |
+| `bc_xwmax` | Its global position | m |
+| `bc_ei` | Shared flexural rigidity | kN·m² |
+| `bc_n` | Span count | — |
+
+Case E (3×6 m, PIN–PIN, g=10, q=5, EI=10000, default factors, self-weight OFF) exports Mmax=66.0005357143, Mmin=−80.1, |V|max=76.35, Rmax=143.1 and |w|max=15.3264571214 mm. The symmetric maximum may be reported at 2.75420947417 or 15.24579052583 m; `bc_xwmax` equals the solver summary position and attains that characteristic maximum.
+
 ### Deflection comparison and self-weight
 
 The compact results view shows `|w|max` in **mm**, its position in **m**, `L/|w|` using consistent length units, and utilization `|w|max / (L / limit)` for both limits. Maxima include all segment boundaries and stationary points of Frame's analytical deflection recovery; they do not depend on plot samples or cursor position. If equal absolute maxima exist, one maximizing position is reported. The selected comparison reports **OK**, **EXCEEDED**, or **N/A** for an undefined ratio (zero deflection). The default limit is L/250. These are user-selected comparison limits, not universal code-compliance certificates.
@@ -98,7 +127,7 @@ For **concrete cantilevers**, the comparisons use **`Lref = 2.5 × L`**, followi
 
 For **steel or MANUAL cantilevers**, `Lref = L` remains the comparison reference and the screen displays **CANTILEVER: AGREE LIMIT**. Cantilever deflection limits must be agreed for the project or supplied by the applicable National Annex; EN 1993-1-1, **7.2**, does not supply a universal equivalent cantilever span. L/250 and L/300 are comparison settings here, not asserted normative cantilever limits.
 
-Choose **Self-weight** on the section page and press `ENTER` or `←` / `→` to switch it ON/OFF. Steel uses `mass [kg/m] × 9.81 / 1000`; concrete uses `25 × (b/1000) × (h/1000)`, both in **kN/m**, positive downward. Input `q user` remains separate; each solve uses `q total = q user + q sw` only when ON. The results view shows available `q sw`, the ON/OFF state and the applied `q total`. With OFF, the displayed available self-weight is not added. Recalculation, section changes and restore never accumulate it. Manual EI or missing weight data show **N/A** and force self-weight OFF. Old saves default to OFF and L/250; both settings persist in new saves.
+Choose **Self-weight** on the section page and press `ENTER` or `←` / `→` to switch it ON/OFF. Steel uses `mass [kg/m] × 9.81 / 1000`; concrete uses `25 × (b/1000) × (h/1000)`, both in **kN/m**, positive downward. Input `q user` remains separate; each solve uses `q total = q user + q sw` only when ON. The results view shows available `q sw`, the ON/OFF state and the applied `q total`. With OFF, the displayed available self-weight is not added. Recalculation, section changes and restore never accumulate it. Manual EI or missing weight data show **N/A** and force self-weight OFF. Both settings persist in valid current documents. An invalid document or another saved format resets all settings and input together.
 
 Concrete results display **RC: GROSS EI ONLY**. No cracked stiffness, creep or long-term deflection is calculated.
 
@@ -131,8 +160,8 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 
 ## Scope and limitations
 
-- **The UI offers one span only**, through the four existing presets. General frames and continuous beams are not selectable; seismic and dynamic analysis are outside the application scope. No multiple load points, partial/trapezoidal UDL, thermal or prescribed displacements.
-- Linear, small-deflection, prismatic Euler–Bernoulli analysis; self-weight is included only when explicitly switched ON. No load combinations or resistance checks.
+- The UI offers four single-span presets and continuous beams with 2–5 spans, PIN/FIX ends and one EI. General frames, seismic and dynamic analysis remain outside the application scope. Continuous input supports full-span g/q only. No multiple load points, partial/trapezoidal UDL, thermal or prescribed displacements.
+- Linear, small-deflection, prismatic Euler–Bernoulli analysis; self-weight is included only when explicitly switched ON. Continuous load envelopes use the editable factors described above; no resistance checks are performed.
 - **Concrete:** `Ecm` with **gross uncracked** rectangular inertia only. Displayed deflections are **not** cracked/creep-adjusted reinforced-concrete service deflections. No reinforcement or EC2 design verification.
 - Steel profile values are nominal and not geometric/material strength checks; neither steel nor concrete code verification is performed.
 - The five independently resolved legacy failures now solve through Frame, including loads near supports. The engine limit is 20 model nodes, based on the CX CAS measurements below; numerical checks remain unchanged.
@@ -146,7 +175,7 @@ BeamCX/
 ├── src/
 │   ├── frame_core.lua      # Single productive numerical engine and recovery
 │   ├── beam_preset.lua     # Four presets; downward input sign boundary; CAS summary
-│   ├── continuous_preset.lua # P5A calculation only: basis cases and envelopes
+│   ├── continuous_preset.lua # Productive continuous bases, envelopes and summary
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/
@@ -161,6 +190,8 @@ BeamCX/
 │   ├── test_productive_route.py # UI → Frame instrumentation, cursors, RESOLVED
 │   ├── test_frame_core.py  # 394 original Frame oracles and retained regressions
 │   ├── test_continuous_preset.py # Rational reference, patterns, combine, uplift
+│   ├── test_continuous_ui.py # Deferred solve, cache, cursor, bc_* and strict restore
+│   ├── continuous_ui.lua    # Real continuous UI events, test-only instrumentation
 │   ├── continuous_reference.py # Independent SymPy rotation-only stiffness
 │   ├── run_suites.py       # Complete suite under liblua5.4 or a Lua CLI
 │   ├── test_dc_reference.py # Frame vs frozen dc Euler reference
@@ -184,7 +215,7 @@ BeamCX/
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **12 suites pass under Lua 5.1.5 and Lua 5.4.7** (the existing 11 plus P5A). The P5A test-only reference requires SymPy; the numerical application has no Python dependency. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Limit changes and repaint do not solve again. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **13 suites pass under Lua 5.1.5 and Lua 5.4.7** (the existing 12 plus the continuous UI suite). The P5A test-only reference requires SymPy; the numerical application has no Python dependency. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Single-span limit changes and all repaint operations do not solve again. Continuous edits, including the comparison limit, defer calculation until results entry. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
 
 ## Benchmark (P2A / P5A)
 
@@ -223,15 +254,15 @@ python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc check
 
 The retained P2A comparison rules distinguish **2,009 ordinary equivalent cases, two independently adjudicated cases, five RESOLVED legacy failures and 26 invalid inputs**. P2B consumes these fixtures without regenerating them or changing the numerical authority. Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
 
-## v0.5 P5A — continuous-beam calculation only
+## Continuous-beam calculation (P5A / P5A.1)
 
-The standalone `ContinuousPreset` handles 2–5 spans (provisional `MAX_SPANS=5`), PIN/FIX ends, continuous rotations over intermediate vertical supports, one EI, and full-span uniform g/q loads. Supply self-weight once as part of g. No point loads, continuous-beam selector, persistence or CAS namespace are added to the application. `BeamCX.lua` and `BeamCX.tns` remain the validated v0.4.0 artifacts.
+The productive `ContinuousPreset` handles 2–5 spans (definitive `MAX_SPANS=5`), PIN/FIX ends, continuous rotations over intermediate vertical supports, one EI, and full-span uniform g/q loads. Supply self-weight once as part of g. P5B connects these calculations to the selector, shared sections, persistent input, plots, tables and `bc_*` export. Point loads remain exclusive to the single-span presets.
 
 `ContinuousPreset.model(p, 'G' or span_index)` creates the permanent and individual variable-load cases; `solve(p)` uses exactly n+1 Frame solves. Its result exposes `envelope_at(global_x, side)`, span algebraic `Mmax`/`Mmin` and positive `Mplus`, signed downward/upward characteristic deflection records and the governing L/250 or L/300 comparison, support Mmin/Mmax/Rmax/Rmin, global absolute shear and a semantic summary. Records include local/global position, load pattern text and the governing global gammaG where applicable. P5A.1 removes pattern enumeration from `src/`. Linear quantities use the exact sum of favorable/unfavorable basis contributions and both global gammaG choices. Moment envelopes split the span at the real roots of G and Qi; on each piece only its endpoints and quadratic vertex are candidates. This includes positive support moments and does not use alternating patterns for moments. Characteristic deflection uses unit factors and the two odd/even patterns with Frame extrema, labelled **w car.** That deflection rule is experimentally verified, **not a theorem**. Defaults are gammaG_sup=1.35, gammaG_inf=1 and gammaQ=1.5; their convention is explicitly **OPEN**, to be checked against EN 1990 Annex A1 and the applicable NA. No normative compliance is claimed.
 
-`Frame.combine(solutions, factors)` superposes compatible recovered results without assembly/solve and without changing its operands. Geometry, connectivity, EI/EA, supports, springs, releases and recovery cuts must match. Incompatibilities return `nil, 'incompatible solutions: ...'`. Per the approved API change, standalone `Frame.deflection_extrema` now returns `wmin, xmin, wmax, xmax` in one search; BeamPreset selects the larger absolute value, preserving its API. The frozen application bundle retains its existing interface until P5B.
+`Frame.combine(solutions, factors)` superposes compatible recovered results without assembly/solve and without changing its operands. Geometry, connectivity, EI/EA, supports, springs, releases and recovery cuts must match. Incompatibilities return `nil, 'incompatible solutions: ...'`. Per the approved API change, standalone `Frame.deflection_extrema` now returns `wmin, xmin, wmax, xmax` in one search; BeamPreset selects the larger absolute value, preserving its API. The generated application includes both presets and this shared Frame API. P5B-R1 leaves `continuous_preset.lua` and `frame_core.lua`, including `Frame.combine`, unchanged.
 
-P5A tests retain independent rational SymPy stiffness (rotational DOFs only), direct Frame load sums, 101 points/span, and separate uplift/downward extrema. P5A.1 additionally checks 300 deterministic random models (1,050 spans, all PIN/FIX end combinations, spans 2–10 m, g/q in 0–30 kN/m) against test-only exhaustive Frame combinations. Values, positions and reported governing patterns are compared at 1e-9. The positive support-B regression requires +28.081141172746 with pattern `3` and gammaG=1.00. [The P5A.1 report](VALIDATION_P5A1.md) gives errors and current PC timings; [P5A](VALIDATION_P5A.md) retains the initial exhaustive baseline and API description. Timing on the CX and the final MAX_SPANS/deferred-calculation choice remain with P5B.
+P5A tests retain independent rational SymPy stiffness (rotational DOFs only), direct Frame load sums, 101 points/span, and separate uplift/downward extrema. P5A.1 additionally checks 300 deterministic random models (1,050 spans, all PIN/FIX end combinations, spans 2–10 m, g/q in 0–30 kN/m) against test-only exhaustive Frame combinations. Values, positions and reported governing patterns are compared at 1e-9. The positive support-B regression requires +28.081141172746 with pattern `3` and gammaG=1.00. [The P5A.1 report](VALIDATION_P5A1.md) gives errors and current PC timings; [P5A](VALIDATION_P5A.md) retains the initial exhaustive baseline and API description. Measured complete envelopes on the CX take 0.72 / 1.39 / 2.26 / 3.25 s for 2 / 3 / 4 / 5 spans. A single envelope query takes about 4–8 ms. These measurements fix MAX_SPANS=5 and deferred continuous calculation. UI sampling adds work after the solve; the delivered package still needs owner timing on the CX.
 
 ## Data references
 
@@ -247,5 +278,5 @@ MIT — see [LICENSE](LICENSE).
 
 ## Development note
 
-The beam formulation was adapted for a restricted single-span TI-Lua application using Euler–Bernoulli frame-element stiffness terms; it is **not** a complete port of the original `dinamica-computacional` project. P2B activates the already validated Frame engine without changing its mechanics, tolerances or sign conventions. Load signs convert only at the existing BeamPreset boundary.
+The beam formulation was adapted for a restricted single-span TI-Lua application using Euler–Bernoulli frame-element stiffness terms; it is **not** a complete port of the original `dinamica-computacional` project. P2B activates the already validated Frame engine without changing its mechanics, tolerances or sign conventions. Load signs convert at the existing BeamPreset and ContinuousPreset boundaries.
 # BeamCX

@@ -66,6 +66,16 @@ local function field(index)
     while state().edit_index>index do on.arrowUp() end
 end
 local function calculate(n)
+    local queries=0
+    local continuous_solve=ContinuousPreset.solve
+    ContinuousPreset.solve=function(p)
+        local result,message=continuous_solve(p)
+        if result then
+            local envelope=result.envelope_at
+            result.envelope_at=function(...) queries=queries+1;return envelope(...) end
+        end
+        return result,message
+    end
     local solve=Frame.solve
     local calls=0
     Frame.solve=function(p) calls=calls+1;return solve(p) end
@@ -75,7 +85,9 @@ local function calculate(n)
     assert(invalidates>before)
     contains(paint(),'Calculando…')
     on.timer()
+    ContinuousPreset.solve=continuous_solve
     Frame.solve=solve
+    assert(queries==21*n+1,'samples and initial cursor must be queried exactly once')
     assert(not running and not state().calculating and not state().stale)
     assert(state().result and calls==n+1,'expected n+1 solves, got '..calls)
     local result=state().result
@@ -115,8 +127,16 @@ local exported={}
 var={store=function(k,v) assert(string.sub(k,1,3)=='bc_');exported[k]=v end}
 on.enterKey()
 local expected={bc_mmax=66.0005357143,bc_mmin=-80.1,bc_vabs=76.35,bc_rmax=143.1,
-    bc_wmax=15.3264571214,bc_xwmax=2.75420947417,bc_ei=10000,bc_n=3}
+    bc_wmax=15.3264571214,bc_ei=10000,bc_n=3}
 for k,v in pairs(expected) do eq(exported[k],v) end
+assert(math.min(math.abs(exported.bc_xwmax-2.75420947417),math.abs(exported.bc_xwmax-15.24579052583))<1e-9)
+assert(exported.bc_xwmax==e.summary.deflection_position)
+local span=exported.bc_xwmax<6 and 1 or 3
+local wx=exported.bc_xwmax-e.spans[span].offset
+local reached=math.max(math.abs(Frame.at(state().characteristic[1],span,wx).w),
+    math.abs(Frame.at(state().characteristic[2],span,wx).w))
+eq(reached,reference.summary.deflection_absolute_max,1e-9)
+eq(reached*1000,exported.bc_wmax,1e-9)
 local count=0;for _ in pairs(exported) do count=count+1 end;assert(count==8)
 contains(paint(),'CAS: 8 variables stored')
 print('PASS E: real UI -> deferred Frame -> identical span/support tables -> eight bc_* values')
@@ -124,6 +144,30 @@ print('PASS E: real UI -> deferred Frame -> identical span/support tables -> eig
 -- Cached plots: zero recovery on paint; one exact envelope query per movement.
 on.arrowRight();assert(on.save().mode==1)
 local samples=state().samples
+local function verify_curves(mode)
+    local counts={0,0}
+    local top,bottom=85,height-82
+    local mid=(top+bottom)/2
+    local keys=mode==1 and {'Mmax','Mmin'} or (mode==2 and {'Vmax','Vmin'} or {'wodd','weven'})
+    local scale=1e-10
+    for _,v in ipairs(samples) do for _,key in ipairs(keys) do scale=math.max(scale,math.abs(v[key])) end end
+    local jumps=0
+    for _,line in ipairs(gc.lines) do
+        local color=line.color
+        local k=color[1]==242 and 1 or (color[1]==80 and 2 or nil)
+        if k then
+            counts[k]=counts[k]+1
+            local a,b=samples[counts[k]],samples[counts[k]+1]
+            local sign=mode==2 and -1 or 1
+            eq(line[2],mid+sign*(bottom-top)*.45*a[keys[k]]/scale)
+            eq(line[4],mid+sign*(bottom-top)*.45*b[keys[k]]/scale)
+            if mode==1 and a[keys[k]]>1e-9 then assert(line[2]>mid) end
+            if mode==2 and a.x==b.x and math.abs(line[2]-line[4])>1e-8 then jumps=jumps+1 end
+        end
+    end
+    assert(counts[1]==#samples-1 and counts[2]==#samples-1)
+    if mode==2 then assert(jumps==4,'both shear envelopes must jump at both internal supports') end
+end
 local queries=0
 local env=e.envelope_at
 e.envelope_at=function(...) queries=queries+1;return env(...) end
@@ -138,7 +182,7 @@ for mode=1,3 do
         eq(c.wodd,-Frame.at(state().characteristic[1],i,c.x-e.spans[i].offset).w*1000)
         eq(c.weven,-Frame.at(state().characteristic[2],i,c.x-e.spans[i].offset).w*1000)
     end
-    paint();paint();assert(queries==before+1 and rawequal(samples,state().samples))
+    paint();verify_curves(mode);paint();assert(queries==before+1 and rawequal(samples,state().samples))
     on.arrowRight()
 end
 -- Revisit input and results without editing: no timer or new solve/cache.
@@ -205,25 +249,58 @@ assert(calls==0 and state().page==1 and state().stale and state().result==nil an
 local restored=on.save();restored.page=saved.page;same(restored,saved)
 Frame.solve=solve
 calculate(5)
-local corrupt=on.save()
-corrupt.params.support=2.5;corrupt.params.L=-1;corrupt.params.q=0/0;corrupt.params.a=math.huge
-corrupt.section.material='bad';corrupt.section.b=-3;corrupt.section.profile=999;corrupt.section.manualEI=0
-corrupt.mode=1.2;corrupt.page=2.5;corrupt.cursor=math.huge
-corrupt.continuous.spans={2,-3,math.huge};corrupt.continuous.left='FREE';corrupt.continuous.g='bad'
-corrupt.continuous.gG_sup=0;corrupt.continuous.gG_inf=0/0;corrupt.continuous.gQ=-1
-on.restore(corrupt)
-local c=on.save()
-assert(c.params.support==1 and c.params.L==6 and c.params.q==10 and c.params.a==3)
-assert(c.section.material==1 and c.section.profile==6 and c.section.b==250 and c.section.manualEI==10000)
-assert(c.mode==1 and c.page==0 and c.cursor==.5)
-same(c.continuous.spans,{2,6,6});assert(c.continuous.left=='PIN' and c.continuous.g==10)
-assert(c.continuous.gG_sup==1.35 and c.continuous.gG_inf==1 and c.continuous.gQ==1.5)
-on.restore{format='0.4.0',params={support=5,L=9}};assert(on.save().params.support==1)
+-- Every saved field is mandatory and validated before accepting any of them.
+local valid_saved=on.save()
+fresh()
+local defaults=on.save()
+local function copy(t)
+    if type(t)~='table' then return t end
+    local out={};for k,v in pairs(t) do out[k]=copy(v) end;return out
+end
+local notice='Documento no válido o de otra versión: valores por defecto'
+local function rejected(doc)
+    on.restore(valid_saved)
+    on.restore(doc)
+    same(on.save(),defaults)
+    assert(state().page==0 and state().restore_notice==notice and state().result and not running)
+    contains(paint(),'Documento no válido o de otra versión:')
+    contains(paint(),'valores por defecto')
+    assert(state().restore_notice==notice,'painting and saving must retain notice')
+end
+local bad=copy(valid_saved);bad.params.L=0;rejected(bad)
+-- Real v0.4 on.save shape: no format or continuous parameters, no migration.
+local v04={params={L=9,q=-8,P=13,a=2,EI=27000,support=4},
+    section={material=5,profile=10,b=300,h=600,manualEI=27000},
+    settings={self_weight=true,limit=300},page=2,mode=4,cursor=.7}
+rejected(v04)
+for _,change in ipairs{
+    {'format','0.4.0'},{'page',2.5},{'page',7},{'mode',0},{'cursor',math.huge},
+    {'params','support',2.5},{'params','L',0},{'params','q',0/0},{'params','P','bad'},
+    {'params','a',7},{'params','EI',-1},{'section','material','bad'},
+    {'section','profile',999},{'section','b',-3},{'section','h',0},{'section','manualEI',0},
+    {'settings','self_weight',1},{'settings','limit',275},
+    {'continuous','spans',{6}},{'continuous','spans',{2,-3,6}},
+    {'continuous','spans',{6,6,math.huge}},{'continuous','left','FREE'},
+    {'continuous','right',false},{'continuous','g','bad'},{'continuous','q',0/0},
+    {'continuous','gG_sup',0},{'continuous','gG_inf',0/0},{'continuous','gQ',-1}
+} do
+    bad=copy(valid_saved)
+    if #change==2 then bad[change[1]]=change[2] else bad[change[1]][change[2]]=change[3] end
+    rejected(bad)
+end
+for _,key in ipairs{'params','section','settings','continuous','format','page','mode','cursor'} do
+    bad=copy(valid_saved);bad[key]=nil;rejected(bad)
+end
+for _,key in ipairs{on.tabKey,on.escapeKey,on.backspaceKey,function() on.charIn('5') end,
+    on.arrowUp,on.arrowDown,on.arrowLeft,on.arrowRight,on.enterKey} do
+    rejected(v04);key();assert(state().restore_notice==nil,'first action must clear notice')
+end
+on.restore(defaults)
 local simple=on.save();simple.params.support=4;simple.params.q=-3;simple.page=2;simple.mode=4
 on.restore(simple);same(on.save(),simple)
 var={store=function(k) assert(string.sub(k,1,3)=='bx_') end};on.enterKey()
 assert(state().export_message=='CAS: 8 variables stored')
-print('PASS current save/restore both modes; invalid fields default independently; namespace separation')
+print('PASS current save/restore both modes; invalid documents reset completely with notice; namespace separation')
 
 -- A failed deferred candidate restores the previous solved model and references.
 on.escapeKey()
@@ -245,10 +322,15 @@ print('PASS deferred selector rollback, retry and timer cancellation')
 -- Target canvas: scroll every input row and render all result modes and table pages.
 for _,size in ipairs{{318,212},{320,212},{320,240}} do
     width,height=size[1],size[2]
-    fresh();open_continuous()
-    for i=1,11 do field(i);paint() end
-    calculate(3)
-    for i=1,3 do paint();on.arrowRight() end
-    paint();on.arrowDown();paint()
+    for n=2,5 do
+        fresh();open_continuous()
+        if n==2 then on.arrowLeft() end
+        for i=4,n do on.arrowRight() end
+        assert(#on.save().continuous.spans==n)
+        for i=1,n+8 do field(i);paint() end
+        calculate(n)
+        for i=1,3 do paint();on.arrowRight() end
+        paint();on.arrowDown();paint()
+    end
 end
 print('PASS all continuous screens at 318x212, 320x212 and 320x240')

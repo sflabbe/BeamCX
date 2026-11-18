@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install Python test dependencies
+        run: python3 -m pip install sympy==1.13.3
       - name: Install Lua runtime used by test harness
         run: sudo apt-get update && sudo apt-get install -y liblua5.4-0 lua5.1
       - name: Generate the TI-Lua bundle

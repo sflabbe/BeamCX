@@ -83,7 +83,7 @@ local function calculate(n)
     on.tabKey()
     assert(state().page==2 and state().calculating and running and calls==0)
     assert(invalidates>before)
-    contains(paint(),'Calculando…')
+    contains(paint(),'Calculating…')
     on.timer()
     ContinuousPreset.solve=continuous_solve
     Frame.solve=solve
@@ -119,9 +119,9 @@ local reference=assert(ContinuousPreset.solve{spans={6,6,6},left='PIN',right='PI
 same(e.spans,reference.spans);same(e.supports,reference.supports);same(e.summary,reference.summary)
 for i=1,3 do paint();on.arrowRight() end
 assert(on.save().mode==4)
-local text=paint();contains(text,'Vanos');contains(text,'↓15.326')
+local text=paint();contains(text,'Spans');contains(text,'↓15.33')
 contains(text,'γ: OPEN (EN 1990 A1 + NA)')
-on.arrowDown();contains(paint(),'Apoyos');assert(state().table_page==2)
+on.arrowDown();contains(paint(),'Supports');assert(state().table_page==2)
 on.arrowUp();assert(state().table_page==1)
 local exported={}
 var={store=function(k,v) assert(string.sub(k,1,3)=='bc_');exported[k]=v end}
@@ -196,7 +196,7 @@ for i=1,40 do
     local c=state().cursor_value
     if c.left then
         eq(c.left.Vmax,env(c.x,'left').Vmax);eq(c.right.Vmin,env(c.x,'right').Vmin)
-        contains(paint(),'V izq');contains(paint(),'V der');break
+        contains(paint(),'V left');contains(paint(),'V right');break
     end
     assert(i<40,'cursor missed every support')
 end
@@ -257,14 +257,14 @@ local function copy(t)
     if type(t)~='table' then return t end
     local out={};for k,v in pairs(t) do out[k]=copy(v) end;return out
 end
-local notice='Documento no válido o de otra versión: valores por defecto'
+local notice='Invalid document or version: defaults restored'
 local function rejected(doc)
     on.restore(valid_saved)
     on.restore(doc)
     same(on.save(),defaults)
     assert(state().page==0 and state().restore_notice==notice and state().result and not running)
-    contains(paint(),'Documento no válido o de otra versión:')
-    contains(paint(),'valores por defecto')
+    contains(paint(),'Invalid document or version:')
+    contains(paint(),'defaults restored')
     assert(state().restore_notice==notice,'painting and saving must retain notice')
 end
 local bad=copy(valid_saved);bad.params.L=0;rejected(bad)
@@ -308,7 +308,7 @@ local previous=state();local previous_save=on.save()
 on.arrowUp();on.arrowLeft();on.arrowLeft();open_continuous()
 local broken=ContinuousPreset.solve
 ContinuousPreset.solve=function() return nil,'deferred failure' end
-on.tabKey();contains(paint(),'Calculando…');on.timer()
+on.tabKey();contains(paint(),'Calculating…');on.timer()
 ContinuousPreset.solve=broken
 local rolled=state()
 assert(rolled.page==0 and rolled.support==4 and rolled.selector_error=='deferred failure')

@@ -37,7 +37,7 @@ Bench.cases={{name='simple q+P',model=continuous(1)},
 for n=2,5 do
     local lengths={4,6,5,3,7}
     local spans={};for i=1,n do spans[i]=lengths[i] end
-    Bench.cases[#Bench.cases+1]={name='continua '..n..' env',
+    Bench.cases[#Bench.cases+1]={name='continuous '..n..' env',
         preset={spans=spans,left='PIN',right='PIN',g=8,q=5,EI=20000}}
 end
 local function recover(sol)

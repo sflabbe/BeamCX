@@ -1,9 +1,16 @@
 # Changelog
 
-## 0.5.0
-- Added CONTINUA to a 3×2 selector with five cards, support schemes, normalized M silhouettes, empty-cell navigation and transactional rollback.
+## 0.5.0 — UI polish R2
+- Standardized all application UI text to English, including CONTINUOUS, forms, envelopes, tables, instructions, restore notices and feedback. Updated the benchmark's continuous-case label.
+- Display results with two decimal places; normalize negative zero. Tiny nonzero magnitudes below 0.005 and large magnitudes from 10⁷ use scientific notation with a two-decimal mantissa. Keyboard editing, saves, calculations and both CAS exports retain full precision.
+- Renamed local `car` to `characteristic_result` in the continuous preset and matching test/reference code. Translated `w car.` labels to `w char.`. Public APIs, persistent fields and CAS names are unchanged; no compatibility aliases are needed.
+- Wrapped long selector errors, fitted editable text without dropping digits, and corrected a footer overlap and a translated section caption. Reviewed all relevant screens at 318×212, 320×212 and 320×240 with simulated font metrics.
+- All 14 suites pass in Lua 5.1.5 and 5.4.7; the 394 Frame rows, 2042 golden cases and P5A.1 300-model comparison are preserved. Package: **28955 bytes**, final USB packet **130 bytes**. See VALIDATION_P5B_UI_POLISH_R2.md. No hardware acceptance is claimed.
+
+## 0.5.0 — P5B / P5B-R1 original delivery
+- Added CONTINUOUS to a 3×2 selector with five cards, support schemes, normalized M silhouettes, empty-cell navigation and transactional rollback.
 - Added scrolling 2–5-span input, PIN/FIX ends, g/q and editable γ factors. Shared sections provide EI and self-weight, added once to g. Per-span deflection comparison uses L/250 or L/300.
-- Continuous edits invalidate results; results entry displays Calculando… and defers calculation to on.timer. Plots use a stored 20-interval-per-span cache including both support sides. Cursor movement queries the exact envelope once. No solve or envelope query occurs during painting.
+- Continuous edits invalidate results; results entry displays Calculating… and defers calculation to on.timer. Plots use a stored 20-interval-per-span cache including both support sides. Cursor movement queries the exact envelope once. No solve or envelope query occurs during painting.
 - Added M/V envelopes, odd/even characteristic w curves, span/support tables and eight bc_* CAS exports; bc_wmax is in mm. The γ convention remains OPEN (EN 1990 A1 + NA). Single-span behavior and all eight bx_* exports are retained.
 - P5B-R1 persistence accepts only a complete valid 0.5.0 document. Any invalid field or other version resets the entire document to defaults at page 0, with a notice until the first key action. No v0.4 migration or persisted input focus. Continuous restore waits for results entry before calculation.
 - P5B-R1 preserves ContinuousPreset and Frame, including Frame.combine. Case E accepts either symmetric maximum position and verifies that the exported position equals the summary and attains the characteristic maximum.

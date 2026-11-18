@@ -88,8 +88,8 @@ class Reference:
                 target[key]=dict(value=value,x=x,pattern=pattern,gammaG=gamma)
         for active in itertools.product((0,1),repeat=n):
             name='-'.join(str(i+1) for i,a in enumerate(active) if a) or '-'
-            car=self.solve([R(p['g'])+a*R(p['q']) for a in active])
-            for i,s in enumerate(car['spans']):
+            characteristic_result=self.solve([R(p['g'])+a*R(p['q']) for a in active])
+            for i,s in enumerate(characteristic_result['spans']):
                 e=self.extrema(s,True)
                 set_extreme(spans[i],'down',max(0,e['hi']),e['xhi'],name,None,True)
                 set_extreme(spans[i],'up',min(0,e['lo']),e['xlo'],name,None,False)

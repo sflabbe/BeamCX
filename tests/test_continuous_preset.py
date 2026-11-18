@@ -75,7 +75,7 @@ for _,case in ipairs(cases) do
     local result=assert(C.solve(p))
     Frame.solve,Frame.combine=solve,combine
     assert(solves==#p.spans+1 and combines==2)
-    assert(result.factor_convention.status=='OPEN' and result.deflection_label=='w car.')
+    assert(result.factor_convention.status=='OPEN' and result.deflection_label=='w char.')
     for k in pairs(result.summary) do assert(not k:find('bx_',1,true)) end
     local F=(math.abs(p.g)+math.abs(p.q))*result.supports[#result.supports].position
     local L=result.supports[#result.supports].position
@@ -96,8 +96,8 @@ for _,case in ipairs(cases) do
             local got,want=span.deflection[direction],expected[direction]
             eq(p.name..'.w '..direction,got.value,want.value,ws)
             assert(got.x>=0 and got.x<=span.length)
-            local car=direct(p,got.pattern,1,true)
-            eq(p.name..'.xw as w '..direction,-Frame.at(car,i,got.x).w,want.value,ws)
+            local characteristic_result=direct(p,got.pattern,1,true)
+            eq(p.name..'.xw as w '..direction,-Frame.at(characteristic_result,i,got.x).w,want.value,ws)
         end
         local d=span.deflection
         eq(p.name..'.governing w',d.governing.absolute,math.max(math.abs(expected.down.value),math.abs(expected.up.value)),ws)

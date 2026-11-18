@@ -353,7 +353,7 @@ local function paint(c,has_error)
     assert(highlighted==1)
     -- Cards have three disjoint zones at every supported window size.
     -- Name: 12 px; compact supports: 18 px; M: remaining height minus gaps.
-    local preset_names={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUA'}
+    local preset_names={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUOUS'}
     local absolute_m={1/8,1/2,1/12,1/8,0}
     for j=0,32 do absolute_m[5]=math.max(absolute_m[5],math.abs(reference_moment(5,j/32))) end
     for card=1,5 do
@@ -418,13 +418,14 @@ local function paint(c,has_error)
     local names={}
     local legend_count=0
     local error_visible=false
+    local error_lines={}
     local cards_bottom=gc.fill[7].y+gc.fill[7].h
     for _,t in ipairs(gc.texts) do
         names[t.text]=true
         if t.text=='M (q>0)' then legend_count=legend_count+1 end
-        if has_error and t.y==height-33 then
+        if has_error and t.y>=height-42 and t.y<height-15 then
             error_visible=true
-            assert(#t.text>0 and #t.text<#state().selector_error,'long error must be fitted')
+            error_lines[#error_lines+1]=t.text
             assert(t.y>=cards_bottom and t.y+t.h<=height-15,'error overlaps cards or footer')
         end
     end
@@ -432,6 +433,10 @@ local function paint(c,has_error)
         assert(names[t],'missing selector label '..t)
     end
     assert(error_visible==has_error)
+    if has_error then
+        assert(table.concat(error_lines,' ')==string.gsub(state().selector_error,'%s+$',''),
+            'selector error must wrap without truncation')
+    end
     assert(legend_count==1,'reference M legend must appear exactly once')
 end
 for _,size in ipairs{{318,212},{320,212},{320,240}} do

@@ -34,9 +34,9 @@ local function brute(p,bases)
             if factors[i+1]==1 then names[#names+1]=tostring(i) end
         end
         local name=#names>0 and table.concat(names,'-') or '-'
-        local car=assert(Frame.combine(bases,factors))
+        local characteristic_result=assert(Frame.combine(bases,factors))
         for i,L in ipairs(p.spans) do
-            local lo,xlo,hi,xhi=Frame.deflection_extrema(car,i)
+            local lo,xlo,hi,xhi=Frame.deflection_extrema(characteristic_result,i)
             xlo=math.max(0,math.min(L,xlo));xhi=math.max(0,math.min(L,xhi))
             if xlo==0 or xlo==L then lo=0 end
             if xhi==0 or xhi==L then hi=0 end

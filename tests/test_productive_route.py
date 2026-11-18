@@ -84,7 +84,7 @@ local function cursor_text()
     local v=BeamPreset.at(s,s.parameters.L*saved.cursor)
     local values={v.M,v.V,v.w*1000}
     local names={'M [kNm]','V [kN]','w [mm]'}
-    local function fmt(x) return math.abs(x)<1e-10 and '0' or string.format('%.5g',x) end
+    local function fmt(x) if x==0 then return '0.00' end;return string.format(math.abs(x)<.005 and '%.2e' or '%.2f',x) end
     local text='x='..fmt(saved.cursor*s.parameters.L)..' m  '..names[saved.mode]..'='..fmt(values[saved.mode])
     assert(string.find(paint(),text,1,true),'cursor value differs from BeamPreset.at')
     eq(v.N,0)

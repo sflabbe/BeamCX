@@ -139,7 +139,7 @@ on.arrowRight();eq(on.save().mode,3)
 on.arrowUp();eq(on.save().cursor,0.525)
 on.arrowDown();eq(on.save().cursor,0.5)
 on.arrowRight();eq(on.save().mode,4)
-contains('|w|max=16.875 mm');contains('L/250: OK')
+contains('|w|max=16.88 mm');contains('L/250: OK')
 local values=export()
 eq(count(values),8);eq(values.bx_mmax,45);eq(values.bx_mmin,0)
 eq(values.bx_vabs,30);eq(values.bx_wmax,16.875);eq(values.bx_xwmax,3)
@@ -161,7 +161,7 @@ contains('Self-weight');contains('OFF')
 on.enterKey();assert(on.save().settings.self_weight)
 go(2);on.enterKey() -- compact results
 local sw=22.4*9.81/1000
-contains('q sw=0.21974 kN/m');contains('q total=10.22 kN/m')
+contains('q sw=0.22 kN/m');contains('q total=10.22 kN/m')
 values=export();eq(values.bx_ra,(10+sw)*L/2)
 eq(on.save().params.q,10) -- still user load
 local frozen=on.save()
@@ -179,7 +179,7 @@ go(2);values=export();eq(values.bx_ra,(-1+sw220)*L/2)
 go(3);on.arrowDown();on.enterKey()
 assert(not on.save().settings.self_weight)
 go(2);values=export();eq(values.bx_ra,-L/2)
-contains('SW OFF | q sw=0.25702 kN/m');contains('q total=-1 kN/m')
+contains('SW OFF | q sw=0.26 kN/m');contains('q total=-1.00 kN/m')
 
 -- Concrete weight, RC warning and compact eight-row section layout.
 local concrete=on.save()
@@ -187,7 +187,7 @@ concrete.section.material=2;concrete.section.b=250;concrete.section.h=450
 concrete.params.q=0;concrete.settings.self_weight=true;concrete.page=2;concrete.mode=4
 on.restore(concrete)
 values=export();eq(values.bx_ra,25*0.25*0.45*L/2)
-contains('RC: GROSS EI ONLY');contains('q sw=2.8125 kN/m')
+contains('RC: GROSS EI ONLY');contains('q sw=2.81 kN/m')
 for _,h in ipairs{212,240} do
     height=h
     for _,p in ipairs{1,2,3} do
@@ -246,7 +246,7 @@ assert(defaults.page==0 and defaults.mode==1 and defaults.cursor==.5)
 assert(defaults.params.L==6 and defaults.params.q==10 and defaults.params.P==0 and defaults.params.support==1)
 assert(defaults.section.material==1 and defaults.section.profile==6)
 assert(not defaults.settings.self_weight and defaults.settings.limit==250)
-contains('Documento no válido o de otra versión:');contains('valores por defecto')
+contains('Invalid document or version:');contains('defaults restored')
 eq(called,0)
 -- A rejected numerical EDIT must not export the old result.
 local recovered=on.save();recovered.params.L=6;recovered.page=1

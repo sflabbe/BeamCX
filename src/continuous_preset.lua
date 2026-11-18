@@ -73,11 +73,11 @@ local function solve(p)
         if not sol then return nil,message end
         bases[case+1]=sol
     end
-    local out={parameters=p,bases=bases,spans={},supports={},deflection_label='w car.',
+    local out={parameters=p,bases=bases,spans={},supports={},deflection_label='w char.',
         factor_convention={status='OPEN',reference='EN 1990 Annex A1 and applicable NA'}}
     local offsets={0}
     for i,L in ipairs(p.spans) do
-        out.spans[i]={length=L,offset=offsets[i],deflection={label='w car.'}}
+        out.spans[i]={length=L,offset=offsets[i],deflection={label='w char.'}}
         offsets[i+1]=offsets[i]+L
     end
     for i=1,n+1 do out.supports[i]={position=offsets[i]} end
@@ -175,10 +175,10 @@ local function solve(p)
             if active then names[#names+1]=tostring(i) end
         end
         local name=table.concat(names,'-')
-        local car,message=Core.combine(bases,factors)
-        if not car then return nil,message end
+        local characteristic_result,message=Core.combine(bases,factors)
+        if not characteristic_result then return nil,message end
         for i,L in ipairs(p.spans) do
-            local lo,xlo,hi,xhi=Core.deflection_extrema(car,i)
+            local lo,xlo,hi,xhi=Core.deflection_extrema(characteristic_result,i)
             xlo=math.max(0,math.min(L,xlo));xhi=math.max(0,math.min(L,xhi))
             if xlo==0 or xlo==L then lo=0 end
             if xhi==0 or xhi==L then hi=0 end

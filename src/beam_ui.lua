@@ -1,6 +1,6 @@
 -- BeamCX v0.5.0, UI (TI-Lua 5.1). Single productive Frame engine.
 local SectionDB=DB -- the offline DB from the generated single-file script
-local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUA'}
+local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUOUS'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
 local section={material=1,profile=6,b=250,h=450,manualEI=10000}
 local settings={self_weight=false,limit=250}
@@ -38,11 +38,11 @@ local function continuous_parameters()
     return p
 end
 local function continuous_rows()
-    local rows={{key='n',caption='n vanos',value=#continuous.spans}}
+    local rows={{key='n',caption='Spans',value=#continuous.spans}}
     for i,L in ipairs(continuous.spans) do
         rows[#rows+1]={key=i,caption='L'..i..' [m]',value=L}
     end
-    for _,r in ipairs{{'left','Extremo izq.'},{'right','Extremo der.'},
+    for _,r in ipairs{{'left','Left end'},{'right','Right end'},
         {'g','g [kN/m]'},{'q','q [kN/m]'}, {'gG_sup','γG,sup'},
         {'gG_inf','γG,inf'},{'gQ','γQ'}} do
         rows[#rows+1]={key=r[1],caption=r[2],value=continuous[r[1]]}
@@ -56,8 +56,9 @@ end
 
 local function fmt(x)
     if x==nil then return '--' end
-    if math.abs(x)<1e-10 then return '0' end
-    return string.format('%.5g',x)
+    if x==0 then return '0.00' end -- also normalize IEEE negative zero
+    if math.abs(x)<0.005 or math.abs(x)>=1e7 then return string.format('%.2e',x) end
+    return string.format('%.2f',x)
 end
 local function sec_info() return SectionDB.compute(section) end
 local function lref_factor()
@@ -218,13 +219,37 @@ end
 
 local function color(gc,r,g,b) gc:setColorRGB(r,g,b) end
 local function label(gc,t,x,y) gc:drawString(t,x,y,'top') end
-local function fitted(gc,t,x,y,width)
-    while #t>0 and gc:getStringWidth(t)>width do
-        local last=#t
-        while last>1 and string.byte(t,last)>=128 and string.byte(t,last)<192 do last=last-1 end
-        t=string.sub(t,1,last-1)
+local function fitted(gc,t,x,y,width,size)
+    size=size or 9
+    gc:setFont('sansserif','r',size)
+    local fitted_size=size
+    local text_width=gc.getStringWidth and gc:getStringWidth(t)
+    while type(text_width)=='number' and text_width>width and fitted_size>6 do
+        fitted_size=fitted_size-1
+        gc:setFont('sansserif','r',fitted_size)
+        text_width=gc:getStringWidth(t)
     end
     label(gc,t,x,y)
+    gc:setFont('sansserif','r',size)
+end
+local function selector_message(gc,text,w,h)
+    -- Use the reserved footer area without dropping diagnostic text.
+    local lines,size={},9
+    repeat
+        gc:setFont('sansserif','r',size)
+        lines={''}
+        for word in string.gmatch(text,'%S+') do
+            local i=#lines
+            local candidate=lines[i]=='' and word or lines[i]..' '..word
+            if gc:getStringWidth(candidate)>w-16 and lines[i]~='' then
+                lines[i+1]=word
+            else lines[i]=candidate end
+        end
+        if #lines*(size+3)<=27 or size==6 then break end
+        size=size-1
+    until false
+    for i,line in ipairs(lines) do label(gc,line,8,h-42+(i-1)*(size+3)) end
+    gc:setFont('sansserif','r',9)
 end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
@@ -250,12 +275,8 @@ local function draw_edit(gc,w,h)
         local text=(i==edit_index and typing~=nil) and (typing..'_') or name_value(i)
         if i==6 and section.material~=1 then
             text=text..' (auto)'
-            local text_w=gc.getStringWidth and gc:getStringWidth(text)
-            if type(text_w)=='number' and 100+text_w>w-84 then
-                gc:setFont('sansserif','r',9)
-            end
         end
-        label(gc,text,100,y+2)
+        fitted(gc,text,100,y+2,w-184,10)
         gc:setFont('sansserif','r',10)
         if units[i]~='' then label(gc,units[i],w-78,y+2) end
     end
@@ -278,7 +299,7 @@ local function scroll_top(index,top,count)
 end
 local function draw_continuous_edit(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
-    label(gc,'CONTINUA | entrada',8,28)
+    label(gc,'CONTINUOUS | Input',8,28)
     local rows=continuous_rows()
     local count=math.max(1,math.floor((h-94)/18))
     edit_top=scroll_top(edit_index,edit_top,count)
@@ -291,13 +312,13 @@ local function draw_continuous_edit(gc,w,h)
         else color(gc,215,225,236) end
         label(gc,row.caption,12,y)
         local value=type(row.value)=='number' and fmt(row.value) or row.value
-        fitted(gc,i==edit_index and typing~=nil and typing..'_' or value,160,y,w-174)
+        fitted(gc,i==edit_index and typing~=nil and typing..'_' or value,160,y,w-174,10)
     end
     gc:setFont('sansserif','r',9);color(gc,255,200,112)
-    fitted(gc,err or (stale and 'Desactualizado | TAB: calcular' or 'Resultado guardado'),7,h-45,w-14)
+    fitted(gc,err or (stale and 'Outdated | TAB: calculate' or 'Result saved'),7,h-45,w-14)
     color(gc,171,193,207)
-    label(gc,'UP/DOWN fila | LEFT/RIGHT n, PIN/FIX',7,h-30)
-    label(gc,'ENTER aplicar | TAB resultados',7,h-16)
+    label(gc,'UP/DOWN field | LEFT/RIGHT spans, ends',7,h-30)
+    label(gc,'ENTER apply | TAB results',7,h-16)
 end
 
 local function section_rows()
@@ -322,7 +343,7 @@ local function section_rows()
     rows[#rows+1]={key='self_weight',caption='Self-weight',
         value=info and info.q_sw and (settings.self_weight and 'ON' or 'OFF') or 'N/A',editable=true}
     if params.support==5 then
-        rows[#rows+1]={key='limit',caption='Limite flecha',value='L/'..settings.limit,editable=true}
+        rows[#rows+1]={key='limit',caption='Defl. limit',value='L/'..settings.limit,editable=true}
     end
     return rows
 end
@@ -346,7 +367,7 @@ local function draw_section(gc,w,h)
         elseif row.editable then color(gc,215,225,236)
         else color(gc,129,164,181) end
         label(gc,row.caption,14,y+2)
-        label(gc,(i==sec_index and typing~=nil) and (typing..'_') or row.value,122,y+2)
+        fitted(gc,(i==sec_index and typing~=nil) and (typing..'_') or row.value,122,y+2,w-130,10)
     end
     if err then color(gc,255,140,120);label(gc,err,7,h-31) end
     color(gc,171,193,207);gc:setFont('sansserif','r',9)
@@ -477,15 +498,11 @@ local function draw_selector(gc,w,h)
     gc:setFont('sansserif','r',9)
     if restore_notice then
         color(gc,255,200,112)
-        label(gc,'Documento no válido o de otra versión:',8,h-42)
-        label(gc,'valores por defecto',8,h-29)
+        label(gc,'Invalid document or version:',8,h-42)
+        label(gc,'defaults restored',8,h-29)
     elseif selector_error then
         color(gc,255,140,120)
-        local message=selector_error
-        while #message>0 and gc:getStringWidth(message)>w-16 do
-            message=string.sub(message,1,-2)
-        end
-        label(gc,message,8,h-33)
+        selector_message(gc,selector_error,w,h)
     end
     color(gc,171,193,207)
     label(gc,'ARROWS select | ENTER open',8,h-15)
@@ -504,7 +521,8 @@ local function diagram(gc,w,h)
     local left,right=23,w-23
     local info=sec_info()
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
-    local title=presets[p.support]..'  L='..fmt(p.L)..'m  '..info.label
+    local section_label=info.kind=='concrete' and 'RECT '..fmt(section.b)..'x'..fmt(section.h) or info.label
+    local title=presets[p.support]..'  L='..fmt(p.L)..'m  '..section_label
     label(gc,title,7,29)
     local title_h=gc.getStringHeight and gc:getStringHeight(title)
     -- Without font metrics, use the 10 pt font plus 4 px for its text box.
@@ -570,15 +588,15 @@ local function diagram(gc,w,h)
     local r=result.reactions
     label(gc,'RA='..fmt(r.left.Ry)..' RB='..fmt(r.right.Ry)..' kN',8,h-29)
     color(gc,171,193,207);gc:setFont('sansserif','r',9)
-    label(gc,'UP/DOWN cursor | ENTER results',8,h-17)
+    label(gc,'UP/DOWN cursor | ENTER results',8,h-15)
 end
 
 local function draw_continuous_table(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',9)
-    label(gc,'CONTINUA | '..(table_page==1 and 'Vanos' or 'Apoyos')..' | L/'..settings.limit,7,27)
+    label(gc,'CONTINUOUS | '..(table_page==1 and 'Spans' or 'Supports')..' | L/'..settings.limit,7,27)
     gc:setFont('sansserif','r',8)
     if table_page==1 then
-        for _,c in ipairs{{'#',7},{'L [m]',27},{'M+ kNm',61},{'w mm',119},{'L/|w|',185},{'Estado',253}} do
+        for _,c in ipairs{{'#',7},{'L [m]',27},{'M+ kNm',61},{'w mm',119},{'L/|w|',185},{'Status',253}} do
             label(gc,c[1],c[2],44)
         end
         for i,s in ipairs(result.spans) do
@@ -608,13 +626,13 @@ local function draw_continuous_table(gc,w,h)
     color(gc,128,222,181)
     fitted(gc,export_message or 'ENTER: EXPORT CAS bc_*',7,h-29,w-14)
     color(gc,171,193,207)
-    label(gc,'UP/DOWN tabla | LEFT/RIGHT modos | TAB seccion',7,h-15)
+    label(gc,'UP/DOWN table | LEFT/RIGHT mode | TAB section',7,h-15)
 end
 local function continuous_diagram(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',9)
-    local titles={'M envolvente [kNm]','V envolvente [kN]','w caracteristica [mm]'}
-    label(gc,'CONTINUA | '..titles[mode],7,28)
-    label(gc,mode==3 and 'Naranja: impares | Azul: pares' or 'Naranja: max | Azul: min',7,43)
+    local titles={'M envelope [kNm]','V envelope [kN]','w characteristic [mm]'}
+    label(gc,'CONTINUOUS | '..titles[mode],7,28)
+    label(gc,mode==3 and 'Orange: odd | Blue: even' or 'Orange: max | Blue: min',7,43)
     local left,right=23,w-23
     local total=result.supports[#result.supports].position
     local function px(x) return left+(right-left)*x/total end
@@ -647,16 +665,16 @@ local function continuous_diagram(gc,w,h)
     color(gc,244,244,244);gc:setFont('sansserif','r',8)
     label(gc,'x='..fmt(v.x)..' m',7,h-76)
     if mode==3 then
-        label(gc,'w impares='..fmt(v.wodd)..' | pares='..fmt(v.weven)..' mm',7,h-61)
+        label(gc,'w odd='..fmt(v.wodd)..' | even='..fmt(v.weven)..' mm',7,h-61)
     else
         label(gc,'Mmax='..fmt(v.Mmax)..' | Mmin='..fmt(v.Mmin)..' kNm',7,h-61)
         if v.left then
-            label(gc,'V izq max/min: '..fmt(v.left.Vmax)..' / '..fmt(v.left.Vmin)..' kN',7,h-47)
-            label(gc,'V der max/min: '..fmt(v.right.Vmax)..' / '..fmt(v.right.Vmin)..' kN',7,h-33)
+            label(gc,'V left max/min: '..fmt(v.left.Vmax)..' / '..fmt(v.left.Vmin)..' kN',7,h-47)
+            label(gc,'V right max/min: '..fmt(v.right.Vmax)..' / '..fmt(v.right.Vmin)..' kN',7,h-33)
         else label(gc,'Vmax='..fmt(v.Vmax)..' | Vmin='..fmt(v.Vmin)..' kN',7,h-47) end
     end
     color(gc,171,193,207)
-    label(gc,'UP/DOWN cursor | LEFT/RIGHT modo | ENTER tabla',7,h-15)
+    label(gc,'UP/DOWN cursor | LEFT/RIGHT mode | ENTER table',7,h-15)
 end
 
 on=on or {}
@@ -669,7 +687,7 @@ function on.paint(gc)
     if params.support==5 and page==2 then
         if calculating then
             color(gc,255,200,112);gc:setFont('sansserif','r',12)
-            label(gc,'Calculando…',20,65)
+            label(gc,'Calculating…',20,65)
         elseif result and samples then
             if mode==4 then draw_continuous_table(gc,w,h) else continuous_diagram(gc,w,h) end
         end
@@ -992,7 +1010,7 @@ function on.restore(data)
         params=copy(data.params);section=copy(data.section);continuous=copy(data.continuous)
         settings=copy(data.settings)
     else
-        restore_notice='Documento no válido o de otra versión: valores por defecto'
+        restore_notice='Invalid document or version: defaults restored'
     end
     recalc()
     if valid then

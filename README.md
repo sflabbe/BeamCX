@@ -40,7 +40,8 @@ python3 build.py
 luac5.1 -p BeamCX.lua
 python3 tests/run_suites.py
 python3 tests/run_suites.py --lua lua5.1
-~/Luna/luna BeamCX.lua BeamCX.tns
+python3 tests/package_check.py
+python3 tools/package.py
 ```
 
 The analytical/UI Lua check can also run directly:
@@ -50,7 +51,52 @@ luac5.1 -p BeamCX.lua
 lua5.1 tests/quick_check.lua "$PWD"
 ```
 
-Releases are packaged with official **Luna commit `a9924a9`**. Luna compresses with the system zlib, so `.tns` sizes differ between machines (classic zlib vs. zlib-ng: e.g. 11,938 vs. 12,006 bytes for the same v0.3.2 script); both are valid, and size is not a cross-machine build check. One upload of v0.3.2 stalled N-Link at 91 %. That attempt used the file name `BeamCX_0.3.tns` (extra dot), the `Apps` folder and the classic-zlib build; the transfer that worked used a plain name, the root folder and the zlib-ng build. The cause was not isolated. The classic-zlib v0.3.3 build later transferred fine under a plain name in the root folder. Recommended practice: plain file names without extra dots (e.g. `BeamCX.tns`) and the root folder.
+Packages use official **Luna commit `a9924a9`**. Use `python3 tools/package.py` after generating Lua. It runs `~/Luna/luna`, checks the document size and adds a comment line at the end of the generated Lua only if required, then repackages (at most eight total attempts). `src/` is never padded. To package the existing benchmark, use `python3 tools/package.py --bench`; both use the same guard. Rebuilding Lua removes any previous padding.
+
+The owner confirmed the **N-Link/libnspire USB closing-packet failure in hardware**: libnspire sends file chunks of 253 bytes; the last USB packet has `17 + (tns_size % 253)` bytes. When that length is a multiple of 64, the short closing packet is missing and transfer hangs. The packaging guard rejects `(17 + size % 253) % 64 == 0`. The controlled 20,732/20,733-byte experiment retained the same Lua and changed transfer from failure to success. Compression changes document size and therefore whether this condition occurs; the failure is not assigned to a compression library.
+
+| Observed document | TNS bytes | Last USB packet | Hardware result |
+| --- | ---: | ---: | --- |
+| v0.3.2, classic zlib | 11,938 | 64 | Hung at 91% |
+| v0.3.2, zlib-ng | 12,006 | 132 | Transferred |
+| v0.4.0, classic zlib | 20,604 | 128 | Hung at 97% |
+| v0.4.0, zlib-ng witness | 20,721 | 245 | Transferred |
+| Controlled experiment | 20,732 | 256 | Hung |
+| Controlled experiment | 20,733 | 257 | Transferred |
+
+Keep the recommendation to use **simple file names without extra dots** (e.g. `BeamCX.tns`) and the calculator's root folder. Newly generated packages still require owner transfer testing; the guard checks the confirmed size condition on the PC.
+
+### Isolated zlib-ng packaging on Debian 13
+
+```bash
+sudo apt install build-essential cmake git binutils python3 lua5.1
+python3 build.py
+./tools/build_tns_zlibng.sh
+```
+
+This produces `BeamCX.lua` and **`BeamCX-zng.tns`**, leaving `BeamCX.tns` and the installed `~/Luna/luna` untouched. It downloads zlib-ng **2.2.4**, commit **`860e4cff7917d93f54f5d7f0bc1d0e8b1a3cb988`**, and exports unmodified Luna **`a9924a9a968954eba9adcc161a58ac607f97ce8c`** from `~/Luna` (or `LUNA_REPO`); if absent, Luna sources are cloned locally. Sources, build output and linkage evidence stay in ignored `.build-zng/`. No global Debian library or `LD_PRELOAD` configuration is changed.
+
+CMake options: `CMAKE_BUILD_TYPE=Release`, `CMAKE_POSITION_INDEPENDENT_CODE=ON`, `ZLIB_COMPAT=ON`, `BUILD_SHARED_LIBS=OFF`, `WITH_NATIVE_INSTRUCTIONS=OFF`, `WITH_RUNTIME_CPU_DETECTION=ON`, `WITH_OPTIM=ON`, `WITH_NEW_STRATEGIES=ON`; `ZLIB_ENABLE_TESTS`, `ZLIBNG_ENABLE_TESTS` and `WITH_GTEST` are OFF. Luna retains its original compilation flags; the explicit `.build-zng/zlib-build/libz.a` replaces `-lz`. Original DEFLATE parameters remain unchanged: default level/strategy, method 8, window bits -15, memory level 8.
+
+Verify the actual executable and archive linkage with:
+
+```bash
+ldd .build-zng/luna/luna                       # no libz.so dependency
+grep -F 'libz.a(deflate.c.o)' .build-zng/luna-zng.map
+nm --defined-only .build-zng/luna/luna | grep -E ' (deflate|zlibVersion)$'
+cat .build-zng/build-info.txt
+```
+
+The build verifies TI container headers, directory/entry bounds, CRCs, raw DEFLATE, the application envelope and byte-for-byte recovered Lua. A verification-only helper compiled from unchanged Luna sources supplies the symmetric TI cipher; Python performs independent inflation. zlib-ng's compatible version and its 2.2.4 version string are checked, and recompression must reproduce the exact DEFLATE stream. The same USB size guard applies to the zlib-ng output.
+
+For a classic and zlib-ng diagnostic pair containing the **same final Lua**, run after the isolated build:
+
+```bash
+python3 tools/package.py
+python3 tools/package.py --luna .build-zng/luna/luna --output BeamCX-zng.tns
+```
+
+The isolated build regenerates Lua, so rerun these two commands after rebuilding when comparing both variants. The local 2.2.4 build of the unpadded 66,220-byte script is 20,849 bytes (128 more than the 20,721-byte witness); the witness's zlib-ng version/options are unknown, so binary identity is not required. With the classic guard's one comment included, the delivered pair measures 20,621 bytes (classic) and 20,866 bytes (zlib-ng), both containing the same 66,244-byte Lua. See [build and packaging validation](VALIDATION_BUILD_ZNG_R1.md).
 
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
@@ -156,6 +202,9 @@ BeamCX/
 │   ├── adjudicate_beam_golden.py # Independent mpmath oracle (offline)
 │   ├── dc_reference.py    # dc fixture generator (offline)
 │   ├── bench_ti.lua      # Independent CX timing screen and PC measurement
+│   ├── build_tns_zlibng.sh # Pinned, isolated zlib-ng / Luna build
+│   ├── package.py        # Shared bounded USB size guard, app / benchmark
+│   ├── verify_tns.py     # Container validation and exact Lua recovery
 │   └── build_bench.py    # Bundle only bench.lua
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
@@ -174,7 +223,7 @@ Build and package the independent benchmark with official Luna `a9924a9`:
 
 ```bash
 python3 tools/build_bench.py
-~/Luna/luna bench.lua BXBENCH.tns
+python3 tools/package.py --bench
 # Optional PC CPU reference, using the exact same six models:
 lua5.1 -e "dofile('bench.lua').pc()"
 ```

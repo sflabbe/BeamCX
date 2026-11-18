@@ -6,6 +6,7 @@ frames 1e-4. Performance timings are informational CPU seconds on this PC.
 """
 import argparse
 import ctypes
+import json
 from pathlib import Path
 import subprocess
 
@@ -180,11 +181,11 @@ local m=beam(1,{true});m.supports[1].ux=false
 local err=fail(m,'mechanism');assert(string.find(err,'ux',1,true))
 sol=solve(beam(1,{true}));eq('22b real beam w',Frame.at(sol,1,3).w,-.016875)
 sol=solve(beam(1,nil,1e-7))
-eq('23 merged A',sol.reactions[1].Ry,12);eq('23 merged B',sol.reactions[2].Ry,0)
-assert(#sol.nodes==2 and sol.members[1].points[1].position==0)
+eq('23 merged A',sol.reactions[1].Ry,12*(6-1e-7)/6);eq('23 merged B',sol.reactions[2].Ry,12*1e-7/6)
+assert(#sol.nodes==2 and sol.members[1].points[1].position==1e-7)
 sol=solve(beam(1,nil,.006))
 local a,b=.006,5.994
-assert(#sol.nodes==3)
+assert(#sol.nodes==2)
 eq('23 near A',sol.reactions[1].Ry,12*b/6)
 eq('23 near B',sol.reactions[2].Ry,12*a/6)
 eq('23 near M(a)',Frame.at(sol,1,a,'left').M,12*a*b/6)
@@ -233,22 +234,22 @@ m={nodes={{x=0,y=0},{x=6*c,y=6*s}},members={{i=1,j=2,EA=1e8,EI=1e4}},
 sol=solve(m)
 eq('axial N',Frame.at(sol,1,3).N,12);eq('axial u',Frame.at(sol,1,3).u,36/1e8)
 eq('axial w',Frame.at(sol,1,3).w,0)
--- Fused interior points, transitive cluster, repeated udl and nodal loads;
+-- Close but distinct interior points, repeated udl and nodal loads;
 -- original user coordinates and records must remain unchanged.
 m=beam(1,{true},2)
 m.member_loads[3]={member=1,type='point',a=2+3e-6,P=-3}
 m.member_loads[4]={member=1,type='point',a=2+7e-6,P=-2}
 m.member_loads[5]={member=1,type='udl',q=2}
 m.nodal_loads={{node=2,Fy=1},{node=2,Fy=2}}
-sol=solve(m);assert(#sol.nodes==3 and #sol.members[1].elements==2)
+sol=solve(m);assert(#sol.nodes==2 and #sol.members[1].elements==1)
 assert(m.member_loads[3].a==2+3e-6 and m.member_loads[3].node==nil)
 l,r=Frame.at(sol,1,2,'left'),Frame.at(sol,1,2,'right')
-eq('merged interior V jump',l.V-r.V,17)
--- Point near right end and strict merge threshold (not <=).
+eq('merged interior V jump',l.V-r.V,12)
+-- Points near ends retain their exact positions; no extra nodes.
 sol=solve(beam(1,nil,6-1e-7));assert(#sol.nodes==2)
-eq('23 merged right B',sol.reactions[2].Ry,12)
-local aa=assert(Frame.assemble(beam(1,nil,6e-6)));assert(#aa.nodes==3)
-assert(not pcall(Frame.at,sol,1,6));assert(not pcall(Frame.at,sol,1,6,'right'))
+eq('23 merged right B',sol.reactions[2].Ry,12*(6-1e-7)/6)
+local aa=assert(Frame.assemble(beam(1,nil,6e-6)));assert(#aa.nodes==2)
+assert(pcall(Frame.at,sol,1,6));assert(not pcall(Frame.at,sol,1,6,'right'))
 assert(not pcall(Frame.at,sol,1,-1));assert(not pcall(Frame.at,sol,1,3,'bad'))
 -- Reversed member orientation preserves physical nodal solutions.
 m=beam(1,{true});m.members[1].i=2;m.members[1].j=1;m.member_loads[1].q=10
@@ -257,7 +258,7 @@ eq('reversed local w',Frame.at(sol,1,3).w,.016875)
 -- All supports prescribed / unloaded zero response.
 sol=solve(beam(1,nil,nil,'fixed'));w,x=Frame.deflection_extrema(sol,1);eq('zero w',w,0)
 -- Performance: three spans with one interior point in each, then exactly
--- 60 nodes AFTER partition (30 original nodes + 30 point nodes).
+-- originally 60 nodes after partition; now exactly the 30 model nodes.
 m=beam(3,{true,true,true})
 for i=1,3 do m.member_loads[#m.member_loads+1]={member=i,type='point',a=2,P=-12} end
 local t=os.clock();sol=solve(m);local elapsed=os.clock()-t
@@ -273,9 +274,10 @@ for i=1,30 do
 end
 m.member_loads[#m.member_loads+1]={member=1,type='point',a=4,P=-12}
 t=os.clock();sol=solve(m);elapsed=os.clock()-t
-assert(#sol.nodes==60)
+assert(#sol.nodes==30)
 print(string.format('PERF 60 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
 m.member_loads[#m.member_loads+1]={member=2,type='point',a=4,P=-12}
+for i=31,61 do m.nodes[i]={x=6*(i-1),y=0} end
 fail(m,'model too large for handheld')
 print(string.format('CHECKS max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
 print('PASS P1A: '..rows..' numeric oracles, contracts, checks and performance')
@@ -473,17 +475,19 @@ for _,s in ipairs{1,2,4,5} do
     l,r=Frame.at(sol,1,s,'left'),Frame.at(sol,1,s,'right')
     eq('border V s='..s,l.V,r.V);eq('border M s='..s,l.M,r.M)
 end
--- Moments/dist boundaries share the P1A fusion rule and do not mutate input.
+-- Moments/dist boundaries remain distinct recovery cuts and do not mutate input.
 m=linear_beam(-10,-20,nil,1e-7,3+3e-6)
 m.member_loads[2]={member=1,type='moment',a=3,M=30}
 sol=solve(m)
-assert(#sol.nodes==3 and #sol.members[1].cuts==3 and sol.members[1].cuts[2]==3)
+assert(#sol.nodes==2 and #sol.members[1].cuts==5 and sol.members[1].cuts[3]==3)
 assert(m.member_loads[1].a==1e-7 and m.member_loads[1].b==3+3e-6)
 assert(not pcall(Frame.at,sol,1,3))
--- An interval whose endpoints merge has zero measure after snapping.
+-- This narrow interval retains its nonzero physical load without snapping.
 sol=solve(linear_beam(-10,-20,nil,2,2+1e-7))
-eq('collapsed dist A',sol.reactions[1].Ry,0);eq('collapsed dist B',sol.reactions[2].Ry,0)
--- 60 nodes: 30 original + 29 dist-start nodes + one extra moment node.
+local short_length=(2+1e-7)-2
+local short_B=(2*15*short_length+short_length^2*50/6)/6
+eq('collapsed dist A',sol.reactions[1].Ry,15*short_length-short_B);eq('collapsed dist B',sol.reactions[2].Ry,short_B)
+-- Former 60-node partition model: now exactly 30 original nodes.
 m={nodes={},members={},supports={},member_loads={}}
 for i=1,30 do
     m.nodes[i]={x=(i-1)*6,y=0};m.supports[i]={node=i,ux=i==1,uy=true}
@@ -494,10 +498,134 @@ for i=1,30 do
     end
 end
 m.member_loads[#m.member_loads+1]={member=1,type='moment',a=4,M=30}
-t=os.clock();sol=solve(m);elapsed=os.clock()-t;assert(#sol.nodes==60)
+t=os.clock();sol=solve(m);elapsed=os.clock()-t;assert(#sol.nodes==30)
 print(string.format('PERF P1B 60 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
 print(string.format('CHECKS P1B max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
 print('PASS P1B: '..(rows-p1a_rows)..' new numeric oracles; 85 P1A preserved')
+'''
+
+
+# The supplied fixture is retained byte-for-byte; JSON is converted to Lua
+# literals by the Python harness, so target Lua needs no JSON dependency.
+def lua_literal(value):
+    if value is None:
+        return 'nil'
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, list):
+        return '{' + ','.join(lua_literal(v) for v in value) + '}'
+    return '{' + ','.join('[' + lua_literal(k) + ']=' + lua_literal(v)
+                          for k, v in value.items()) + '}'
+
+
+fixture = json.loads((root / 'tests/fixtures/frame_core_hp_regressions.json').read_text())
+script += '\nlocal hp_cases=' + lua_literal(fixture['cases']) + '\n' + r'''
+-- P1B.1: 255 legacy numeric checks precede these regressions. Six expected
+-- values tied to the deleted merge were updated with explicit user approval.
+assert(rows==255)
+local function solve_compatible(model)
+    local s=solve(model)
+    assert(s.ndof==3*#model.nodes and #s.nodes==#model.nodes)
+    assert(#s.elements==#model.members)
+    assert(s.checks.compatibility_relative<=1e-8)
+    return s
+end
+for _,case in ipairs(hp_cases) do
+    local s=solve_compatible(case.model)
+    assert(s.checks.equilibrium_relative<=1e-11)
+    local rscale,uscale=0,0
+    for _,r in pairs(case.reference.reactions) do
+        for _,v in pairs(r) do rscale=math.max(rscale,math.abs(tonumber(v))) end
+    end
+    for _,u in pairs(case.reference.displacements) do
+        for _,v in pairs(u) do uscale=math.max(uscale,math.abs(tonumber(v))) end
+    end
+    local function hp_value(field,got,want,scale)
+        want=tonumber(want)
+        local error=math.abs(got-want)/scale
+        assert(error<=1e-8,case.name..' '..field..': '..error)
+        print(string.format('HP | %s | %s | %.17g | %.17g | %.6g',case.name,field,want,got,error))
+    end
+    for node,r in pairs(case.reference.reactions) do
+        for _,name in ipairs{'Rx','Ry','Mz'} do
+            hp_value('node '..node..' '..name,s.reactions[tonumber(node)][name],r[name],rscale)
+        end
+    end
+    for node,u in pairs(case.reference.displacements) do
+        for dof,name in ipairs{'ux','uy','rz'} do
+            hp_value('node '..node..' '..name,s.u[3*tonumber(node)-3+dof],u[name],uscale)
+        end
+    end
+    print(string.format('HP_CHECKS | %s | equilibrium=%.17g | residual=%.17g | compatibility=%.17g',
+        case.name,s.checks.equilibrium_relative,s.checks.residual_relative,s.checks.compatibility_relative))
+end
+-- Close loads: the 1 mm gaps create only polynomial spans, never extra DOFs.
+local close_loads={{member=1,type='dist',a=0,b=2.999,q1=-10,q2=-10},
+                   {member=1,type='point',a=3,P=-12},
+                   {member=1,type='moment',a=3.001,M=30}}
+m=beam(1);m.member_loads=close_loads
+sol=solve_compatible(m);assert(sol.checks.equilibrium_relative<=1e-11)
+local separate={}
+for _,load in ipairs(close_loads) do
+    local one=beam(1);one.member_loads={load};separate[#separate+1]=solve_compatible(one)
+end
+for _,s in ipairs{3,3.001} do for _,side in ipairs{'left','right'} do
+    local want=0
+    for _,single in ipairs(separate) do want=want+Frame.at(single,1,s,side).M end
+    eq('P1B.1 close M '..s..' '..side,Frame.at(sol,1,s,side).M,want)
+end end
+print(string.format('CLOSE_CHECKS equilibrium=%.17g compatibility=%.17g',sol.checks.equilibrium_relative,sol.checks.compatibility_relative))
+m=beam(1)
+for i=1,4 do
+    m.member_loads[#m.member_loads+1]={member=1,type='point',a=.5*i,P=-12}
+    m.member_loads[#m.member_loads+1]={member=1,type='moment',a=3+.1*i,M=30}
+    m.member_loads[#m.member_loads+1]={member=1,type='dist',a=.1*i,b=1+.2*i,q1=-10,q2=-20}
+end
+sol=solve_compatible(m);assert(#m.member_loads==12 and sol.ndof==6)
+sol=solve_compatible(beam(3,{true,true,true}));assert(sol.ndof==12)
+sol=solve_compatible(beam(1,{true},nil,'cantilever'))
+local edge,rounded=Frame.at(sol,1,6),Frame.at(sol,1,6*(1+1e-14))
+for _,field in ipairs{'N','V','M','w','u'} do eq('P1B.1 edge '..field,rounded[field],edge[field]) end
+local left_edge=Frame.at(sol,1,-6e-14)
+eq('P1B.1 left edge w',left_edge.w,Frame.at(sol,1,0).w)
+assert(not pcall(Frame.at,sol,1,6*1.01))
+assert(not pcall(Frame.at,sol,1,-6e-10))
+-- The compatibility guard is independent of assembled equilibrium: a
+-- deliberately inconsistent EI/stiffness must fail rather than return data.
+local original_k=Frame.local_k
+Frame.local_k=function(L,EA,EI) return original_k(L,EA,2*EI) end
+local no_result,compat_error=Frame.solve(beam(1,{true}))
+Frame.local_k=original_k
+assert(no_result==nil and string.find(compat_error,'member compatibility failed',1,true))
+-- 60 MODEL nodes, several loads per member: P1A-like and P1B-like cases.
+for _,kind in ipairs{'P1A','P1B'} do
+    m={nodes={},members={},supports={},member_loads={}}
+    for i=1,60 do
+        m.nodes[i]={x=6*(i-1),y=0};m.supports[i]={node=i,ux=i==1,uy=true}
+        if i>1 then
+            local member=i-1
+            m.members[member]={i=i-1,j=i,EA=1e8,EI=1e4}
+            if kind=='P1A' then
+                m.member_loads[#m.member_loads+1]={member=member,type='udl',q=-10}
+                m.member_loads[#m.member_loads+1]={member=member,type='point',a=2,P=-12}
+                m.member_loads[#m.member_loads+1]={member=member,type='point',a=4,P=-6}
+            else
+                m.member_loads[#m.member_loads+1]={member=member,type='dist',a=2,b=6,q1=-10,q2=-20}
+                m.member_loads[#m.member_loads+1]={member=member,type='moment',a=2.001,M=30}
+                m.member_loads[#m.member_loads+1]={member=member,type='point',a=3,P=-12}
+            end
+        end
+    end
+    t=os.clock();sol=solve_compatible(m);elapsed=os.clock()-t
+    assert(sol.ndof==180)
+    print(string.format('PERF P1B.1 %s 60 model nodes: nodes=%d dofs=%d free=%d seconds=%.6f compatibility=%.6g',
+        kind,#sol.nodes,sol.ndof,#sol.free,elapsed,sol.checks.compatibility_relative))
+end
+print('PASS P1B.1: two HP fixtures, close loads, model-only DOFs, endpoint tolerance and compatibility')
 '''
 
 

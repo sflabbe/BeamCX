@@ -1,4 +1,4 @@
--- BeamCX v0.4-P1B: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
+-- BeamCX v0.4-P1B.1: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
 -- Units: m, kN, kNm; EA in kN, EI in kN*m^2. No TI API or Beam dependency.
 -- Global x right, y up, rotations CCW; downward loads are NEGATIVE.
 -- Local x follows i -> j; local y is local x rotated +90 degrees.
@@ -17,8 +17,7 @@ local Frame = {}
 
 local PIVOT_TOL = 1e-12 -- |pivot| / original row maximum, after scaled pivoting.
 local CHECK_TOL = 1e-8 -- relative to largest applied force or origin moment.
-local MERGE_TOL = 1e-6 -- fraction of USER member length, strict '<'.
-local MAX_NODES = 60 -- provisional: measure on the CX in P2.
+local MAX_NODES = 60 -- MODEL nodes only; provisional until CX measurements in P2.
 
 local function finite(x)
     return type(x)=='number' and x==x and math.abs(x)<math.huge
@@ -80,6 +79,57 @@ local function node_index(n,nn)
     return n
 end
 
+-- Stable factored Hermite shapes, and derivatives with respect to s.
+-- Work-conjugate pairs are (local uy, CCW rz); hence a concentrated
+-- moment contributes +M*H'(a), while a transverse force contributes P*H(a).
+local function hermite(L,s)
+    local t=s/L
+    local r=1-t
+    return {r*r*(1+2*t),L*t*r*r,t*t*(3-2*t),-L*t*t*r},
+           {-6*t*r/L,r*(1-3*t),6*t*r/L,t*(3*t-2)}
+end
+-- Retain low-order terms when loads nearly cancel an end shear. This is
+-- essential for a point a few nanometres from an end: the remaining diagram
+-- may be tiny compared to the support reaction, even without a short element.
+local function compensated_add(sum,correction,value)
+    local next_sum=sum+value
+    local lost
+    if math.abs(sum)>=math.abs(value) then lost=(sum-next_sum)+value
+    else lost=(value-next_sum)+sum end
+    return next_sum,correction+lost
+end
+local function add_component(fe,i,value)
+    fe.correction=fe.correction or vector(6)
+    fe[i],fe.correction[i]=compensated_add(fe[i],fe.correction[i],value)
+end
+local function add_transverse(fe,shape,factor)
+    local map={2,3,5,6}
+    for k=1,4 do add_component(fe,map[k],factor*shape[k]) end
+end
+local function add_line_load(fe,L,a,b,qa,qb)
+    if a==0 and b==L then
+        -- Integral H(s)^T*q(s) ds: uniform plus triangular contribution.
+        -- Keep the closed full-length form (and uniform P1A arithmetic).
+        if qa==qb then
+            add_transverse(fe,{L/2,L^2/12,L/2,-L^2/12},qa)
+        else
+            add_transverse(fe,{L*(7*qa+3*qb)/20,L^2*(3*qa+2*qb)/60,
+                               L*(3*qa+7*qb)/20,-L^2*(2*qa+3*qb)/60},1)
+        end
+    else
+        -- H is cubic and q linear: 3-point Gauss-Legendre integrates the
+        -- degree-4 product exactly, without subtracting close antiderivatives.
+        local half=(b-a)/2
+        local z=math.sqrt(3/5)
+        local points,weights={-z,0,z},{5/9,8/9,5/9}
+        for k=1,3 do
+            local t=(points[k]+1)/2
+            local shape=hermite(L,a+(b-a)*t)
+            add_transverse(fe,shape,half*weights[k]*(qa+(qb-qa)*t))
+        end
+    end
+end
+
 local function assemble(model)
     fields(model,{nodes=true,members=true,supports=true,nodal_loads=true,member_loads=true},'model')
     if type(model.nodes)~='table' or #model.nodes==0 or
@@ -131,7 +181,7 @@ local function assemble(model)
                 m.distributed[#m.distributed+1]={left={a=a},right={a=b},
                     q1=require_number(load.q1,'q1'),q2=require_number(load.q2,'q2')}
             elseif kind=='point' then
-                m.points[#m.points+1]={a=a,P=require_number(load.P,'P')}
+                m.points[#m.points+1]={a=a,position=a,P=require_number(load.P,'P')}
             else
                 m.moments[#m.moments+1]={a=a,M=require_number(load.M,'M')}
             end
@@ -139,70 +189,56 @@ local function assemble(model)
     end
     local elements={}
     for mi,m in ipairs(members) do
-        -- Sorted adjacent positions form transitive clusters. An end wins;
-        -- otherwise use the leftmost position, independent of load input order.
-        local positions={{a=0},{a=m.L}}
-        for _,p in ipairs(m.points) do positions[#positions+1]=p end
-        for _,p in ipairs(m.moments) do positions[#positions+1]=p end
+        -- Cuts are recovery coordinates only. No snapping, merging or nodes:
+        -- one user member is always ONE element, independent of its loads.
+        local positions={0,m.L}
+        m.point_positions={}
+        for _,p in ipairs(m.points) do
+            positions[#positions+1]=p.a;m.point_positions[p.a]=true
+        end
+        for _,p in ipairs(m.moments) do
+            positions[#positions+1]=p.a;m.point_positions[p.a]=true
+        end
         for _,d in ipairs(m.distributed) do
-            positions[#positions+1]=d.left;positions[#positions+1]=d.right
+            positions[#positions+1]=d.left.a;positions[#positions+1]=d.right.a
         end
-        table.sort(positions,function(a,b) return a.a<b.a end)
-        local cuts,point_nodes={},{}
-        local first=1
-        while first<=#positions do
-            local last=first
-            while last<#positions and positions[last+1].a-positions[last].a<MERGE_TOL*m.L do
-                last=last+1
-            end
-            local a=positions[first].a
-            if positions[last].a==m.L then a=m.L end
-            cuts[#cuts+1]=a
-            local id
-            if a==0 then id=m.i elseif a==m.L then id=m.j else
-                nodes[#nodes+1]={x=nodes[m.i].x+m.c*a,y=nodes[m.i].y+m.s*a}
-                if #nodes>MAX_NODES then error('model too large for handheld',0) end
-                id=#nodes
-            end
-            point_nodes[#cuts]=id
-            for j=first,last do
-                positions[j].position=a;positions[j].node=id
-            end
-            first=last+1
+        table.sort(positions)
+        local cuts={}
+        for _,a in ipairs(positions) do
+            if cuts[#cuts]~=a then cuts[#cuts+1]=a end
         end
-        m.cuts=cuts;m.point_positions={}
-        for _,p in ipairs(m.points) do m.point_positions[p.position]=true end
-        for _,p in ipairs(m.moments) do m.point_positions[p.position]=true end
-        for j=1,#cuts-1 do
-            local L=cuts[j+1]-cuts[j]
-            local qa,qb=m.q,m.q
-            for _,d in ipairs(m.distributed) do
-                local a,b=d.left.position,d.right.position
-                -- Snapping preserves endpoint intensities on the snapped
-                -- interval. A collapsed interval has zero measure/load.
-                if b>a and cuts[j]>=a and cuts[j+1]<=b then
-                    qa=qa+d.q1+(d.q2-d.q1)*(cuts[j]-a)/(b-a)
-                    qb=qb+d.q1+(d.q2-d.q1)*(cuts[j+1]-a)/(b-a)
-                end
-            end
-            -- Consistent loads: integrate Hermite N(t)^T * q(t) * L dt.
-            -- Uniform qa plus triangle 0 -> (qb-qa) gives transverse
-            -- forces L*(7qa+3qb)/20, L*(3qa+7qb)/20 and nodal CCW
-            -- moments L^2*(3qa+2qb)/60, -L^2*(2qa+3qb)/60.
-            -- Uniform branch retains the P1A arithmetic exactly.
-            local fe
-            if qa==qb then fe={0,qa*L/2,qa*L^2/12,0,qa*L/2,-qa*L^2/12}
-            else fe={0,L*(7*qa+3*qb)/20,L^2*(3*qa+2*qb)/60,
-                     0,L*(3*qa+7*qb)/20,-L^2*(2*qa+3*qb)/60} end
-            local ni,nj=point_nodes[j],point_nodes[j+1]
-            local T=Frame.transformation(m.c,m.s)
-            local kl=Frame.local_k(L,m.EA,m.EI)
-            local el={member=mi,x0=cuts[j],x1=cuts[j+1],L=L,EI=m.EI,qa=qa,qb=qb,
-                      T=T,kl=kl,kg=rotate_k(kl,T),
-                      fe=fe,
-                      map={3*ni-2,3*ni-1,3*ni,3*nj-2,3*nj-1,3*nj}}
-            elements[#elements+1]=el;m.elements[#m.elements+1]=el
+        m.cuts=cuts
+        local L=m.L
+        local fe=vector(6)
+        add_line_load(fe,L,0,L,m.q,m.q)
+        for _,d in ipairs(m.distributed) do
+            add_line_load(fe,L,d.left.a,d.right.a,d.q1,d.q2)
         end
+        for _,p in ipairs(m.points) do
+            local H=hermite(L,p.a)
+            -- Ni+Nj=1: form the large force as P minus the small force,
+            -- keeping its low part instead of rounding P*(1-small) twice.
+            if p.a<=L/2 then
+                add_component(fe,2,p.P);add_component(fe,2,-p.P*H[3]);add_component(fe,5,p.P*H[3])
+            else
+                add_component(fe,5,p.P);add_component(fe,5,-p.P*H[1]);add_component(fe,2,p.P*H[1])
+            end
+            add_component(fe,3,p.P*H[2]);add_component(fe,6,p.P*H[4])
+        end
+        for _,p in ipairs(m.moments) do
+            local _,derivative=hermite(L,p.a)
+            add_transverse(fe,derivative,p.M)
+        end
+        for k=1,6 do
+            local value=fe[k]+fe.correction[k]
+            fe.correction[k]=(fe[k]-value)+fe.correction[k];fe[k]=value
+        end
+        local ni,nj=m.i,m.j
+        local T=Frame.transformation(m.c,m.s)
+        local kl=Frame.local_k(L,m.EA,m.EI)
+        local el={member=mi,L=L,EI=m.EI,T=T,kl=kl,kg=rotate_k(kl,T),fe=fe,
+                  map={3*ni-2,3*ni-1,3*ni,3*nj-2,3*nj-1,3*nj}}
+        elements[mi]=el;m.elements={el}
     end
     local nd=3*#nodes
     local K,F=zeros(nd,nd),vector(nd)
@@ -220,8 +256,18 @@ local function assemble(model)
                  require_number(load.Fy or 0,'Fy'),require_number(load.M or 0,'M'))
     end
     for _,m in ipairs(members) do
-        for _,p in ipairs(m.points) do external(p.node,-m.s*p.P,m.c*p.P,0) end
-        for _,p in ipairs(m.moments) do external(p.node,0,0,p.M) end
+        -- Member loads already enter F through their consistent vectors.
+        -- Here tally their physical resultants independently for equilibrium.
+        for _,p in ipairs(m.points) do
+            local Fx,Fy=-m.s*p.P,m.c*p.P
+            local n=nodes[m.i]
+            local mom=(n.x+m.c*p.a)*Fy-(n.y+m.s*p.a)*Fx
+            applied.Fx=applied.Fx+Fx;applied.Fy=applied.Fy+Fy;applied.Mz=applied.Mz+mom
+            applied.scale=math.max(applied.scale,math.abs(Fx),math.abs(Fy),math.abs(mom))
+        end
+        for _,p in ipairs(m.moments) do
+            applied.Mz=applied.Mz+p.M;applied.scale=math.max(applied.scale,math.abs(p.M))
+        end
         local function line_resultant(a,b,qa,qb)
             local length=b-a
             local R=(qa+qb)*length/2
@@ -234,10 +280,10 @@ local function assemble(model)
             applied.Fx=applied.Fx+Fx;applied.Fy=applied.Fy+Fy;applied.Mz=applied.Mz+mom
             applied.scale=math.max(applied.scale,math.abs(Fx),math.abs(Fy),math.abs(mom))
         end
-        -- Use user loads (at snapped boundaries), not mesh-dependent pieces.
+        -- Use original user positions; no geometric alteration of loads.
         line_resultant(0,m.L,m.q,m.q)
         for _,d in ipairs(m.distributed) do
-            line_resultant(d.left.position,d.right.position,d.q1,d.q2)
+            line_resultant(d.left.a,d.right.a,d.q1,d.q2)
         end
     end
     for _,el in ipairs(elements) do
@@ -312,6 +358,90 @@ local function linear_solve(sol)
     end
     return x
 end
+-- Exact polynomials on a RECOVERY span, x measured from its left cut.
+-- w''=M/EI, integrated from the preceding w and rotation. Horner evaluation
+-- keeps all powers local to the span; no new stiffness matrix is introduced.
+local function span_value(span,x)
+    local V=span.V+x*(span.qa+x*span.g/2)
+    local M=span.M+x*(span.V+x*(span.qa/2+x*span.g/6))
+    local theta=span.theta+x*(span.M+x*(span.V/2+x*(span.qa/6+x*span.g/24)))/span.EI
+    local w=span.w+x*(span.theta+x*(span.M/2+x*(span.V/6+x*(span.qa/24+x*span.g/120)))/span.EI)
+    return V,M,w,theta
+end
+-- The ONLY nodal -> diagram conversion. Starting at i: N=-Ni, V=Vi,
+-- M=-Mi. Crossing a point adds P to V; crossing a CCW moment subtracts M0
+-- from M. Integrate dV/ds=q, dM/ds=V, w''=M/EI between exact load cuts.
+-- Loads AT i are crossed before the first span; loads AT j act outside its
+-- left limit. Thus diagrams still describe the physical interior of a member.
+local function nodal_to_diagram(el,m)
+    local V,Vlow=el.f[2],el.f_correction[2]
+    local M,Mlow=-el.f[3],-el.f_correction[3]
+    local w,theta=el.u[2],el.u[3]
+    el.N=-el.f[1];el.spans={}
+    for k=1,#m.cuts-1 do
+        local a,b=m.cuts[k],m.cuts[k+1]
+        for _,p in ipairs(m.points) do if p.a==a then V,Vlow=compensated_add(V,Vlow,p.P) end end
+        for _,p in ipairs(m.moments) do if p.a==a then M,Mlow=compensated_add(M,Mlow,-p.M) end end
+        local qa,g=m.q,0
+        for _,d in ipairs(m.distributed) do
+            local da,db=d.left.a,d.right.a
+            if a>=da and b<=db then
+                local gradient=(d.q2-d.q1)/(db-da)
+                qa=qa+d.q1+gradient*(a-da);g=g+gradient
+            end
+        end
+        local span={x0=a,x1=b,L=b-a,EI=el.EI,V=V+Vlow,M=M+Mlow,w=w,theta=theta,qa=qa,g=g}
+        el.spans[#el.spans+1]=span
+        local h=span.L
+        local _,_,next_w,next_theta=span_value(span,h)
+        M,Mlow=compensated_add(M,Mlow,h*(Vlow+V+h*(qa/2+h*g/6)))
+        V,Vlow=compensated_add(V,Vlow,h*(qa+h*g/2))
+        w,theta=next_w,next_theta
+    end
+    return w,theta
+end
+-- Isolate stationary points on each span with the P1A 64-interval rule.
+local function roots_on_span(span,value,visit)
+    local a,fa=0,value(0)
+    for k=1,64 do
+        local b=span.L*k/64
+        local fb=value(b)
+        if fa==0 then visit(a) end
+        if fb==0 then visit(b) end
+        if fa~=0 and fb~=0 and (fa<0)~=(fb<0) then
+            local left,right,fleft=a,b,fa
+            while right-left>1e-12*span.L do
+                local mid=(left+right)/2
+                local fm=value(mid)
+                if fm==0 then left=mid;right=mid
+                elseif (fm<0)==(fleft<0) then left=mid;fleft=fm else right=mid end
+            end
+            visit((left+right)/2)
+        end
+        a,fa=b,fb
+    end
+end
+local function compatibility(el,w_end,theta_end)
+    local w_scale=math.max(math.abs(el.u[2]),math.abs(el.u[5]))
+    local theta_scale=math.max(math.abs(el.u[3]),math.abs(el.u[6]))
+    local function candidate(span,x)
+        local _,_,w,theta=span_value(span,x)
+        if not finite(w) or not finite(theta) then error('ill-conditioned: non-finite recovery',0) end
+        w_scale=math.max(w_scale,math.abs(w));theta_scale=math.max(theta_scale,math.abs(theta))
+    end
+    for _,span in ipairs(el.spans) do
+        local function visit(x) candidate(span,x) end
+        candidate(span,0);candidate(span,span.L)
+        roots_on_span(span,function(x) local _,_,_,t=span_value(span,x);return t end,visit)
+        roots_on_span(span,function(x) local _,M=span_value(span,x);return M end,visit)
+    end
+    local dw,dt=w_end-el.u[5],theta_end-el.u[6]
+    local rw=w_scale==0 and (dw==0 and 0 or math.huge) or math.abs(dw)/w_scale
+    local rt=theta_scale==0 and (dt==0 and 0 or math.huge) or math.abs(dt)/theta_scale
+    return {w_residual=dw,rz_residual=dt,w_scale=w_scale,rz_scale=theta_scale,
+            relative=math.max(rw,rt)}
+end
+
 local function solve(model)
     local sol=assemble(model)
     local uf=linear_solve(sol)
@@ -343,15 +473,23 @@ local function solve(model)
                 equilibrium_relative=eq/scale,residual_relative=free_residual/scale,tolerance=CHECK_TOL}
     if not finite(eq) or eq/scale>CHECK_TOL then error('global equilibrium failed',0) end
     if free_residual/scale>CHECK_TOL then error('free DOF residual failed',0) end
+    sol.checks.compatibility_relative=0
+    sol.checks.compatibility_members={}
     for _,el in ipairs(sol.elements) do
-        el.u=vector(6);el.f=vector(6)
+        el.u=vector(6);el.f=vector(6);el.f_correction=vector(6)
         for i=1,6 do for j=1,6 do el.u[i]=el.u[i]+el.T[i][j]*u[el.map[j]] end end
         -- Essential: subtract the consistent fixed-end load vector.
         for i=1,6 do
-            el.f[i]=-el.fe[i]
-            for j=1,6 do el.f[i]=el.f[i]+el.kl[i][j]*el.u[j] end
+            local value,low=-el.fe[i],-el.fe.correction[i]
+            for j=1,6 do value,low=compensated_add(value,low,el.kl[i][j]*el.u[j]) end
+            el.f[i]=value+low;el.f_correction[i]=(value-el.f[i])+low
             if not finite(el.f[i]) then error('ill-conditioned: non-finite end forces',0) end
         end
+        local w_end,theta_end=nodal_to_diagram(el,sol.members[el.member])
+        local check=compatibility(el,w_end,theta_end)
+        sol.checks.compatibility_members[el.member]=check
+        sol.checks.compatibility_relative=math.max(sol.checks.compatibility_relative,check.relative)
+        if check.relative>CHECK_TOL then error(string.format('member compatibility failed: member %d (relative %.6g, dw %.6g, drz %.6g, w scale %.6g, rz scale %.6g)',el.member,check.relative,check.w_residual,check.rz_residual,check.w_scale,check.rz_scale),0) end
     end
     return sol
 end
@@ -361,13 +499,6 @@ function Frame.solve(model)
     return nil,result
 end
 
--- Single nodal -> diagram conversion. Integrate dV/ds=q, dM/ds=V.
--- At j, equilibrium gives V(L)=-V_j and M(L)=+M_j; N=-N_i=N_j.
-local function nodal_to_diagram(el,s)
-    local g=(el.qb-el.qa)/el.L
-    return -el.f[1], el.f[2]+el.qa*s+g*s*s/2,
-           -el.f[3]+el.f[2]*s+el.qa*s*s/2+g*s*s*s/6
-end
 -- Integrate EI*w^(4)=qa+g*s four times, imposing w=w'=0 at 0,L.
 -- The integration constants (before dividing by EI) are
 -- C3=-qa*L/2-3*g*L^2/20, C2=qa*L^2/12+g*L^3/30, C1=C0=0.
@@ -382,38 +513,30 @@ function Frame.load_particular(L,EI,qa,qb,s)
     return s^2*(L-s)^2*h/(120*EI),
            (2*s*(L-s)*(L-2*s)*h+g*s^2*(L-s)^2)/(120*EI)
 end
-local function displacement(el,s)
-    local t=s/el.L
-    local d,L=el.u,el.L
-    local w=(1-3*t^2+2*t^3)*d[2]+L*(t-2*t^2+t^3)*d[3]
-          +(3*t^2-2*t^3)*d[5]+L*(-t^2+t^3)*d[6]
-          +Frame.load_particular(L,el.EI,el.qa,el.qb,s)
-    local u=(1-t)*d[1]+t*d[4]
-    return w,u
-end
-local function at_element(el,s)
-    local N,V,M=nodal_to_diagram(el,s)
-    local w,u=displacement(el,s)
-    return {N=N,V=V,M=M,w=w,u=u}
-end
 local function member_result(sol,member)
     if not finite(member) or member%1~=0 or not sol.members[member] then error('invalid member index',0) end
     return sol.members[member]
 end
+local function at_span(el,span,x,s)
+    local V,M,w=span_value(span,x)
+    local t=s/el.L
+    return {N=el.N,V=V,M=M,w=w,u=(1-t)*el.u[1]+t*el.u[4]}
+end
 function Frame.at(sol,member,s,side)
     local m=member_result(sol,member)
-    if not finite(s) or s<0 or s>m.L then error('s outside member',0) end
+    if not finite(s) or s< -1e-12*m.L or s>m.L*(1+1e-12) then error('s outside member',0) end
+    s=math.max(0,math.min(m.L,s))
     if side~=nil and side~='left' and side~='right' then error('invalid side',0) end
     if m.point_positions[s] and side==nil then error('side required at point or moment load node',0) end
     if s==0 and side=='left' or s==m.L and side=='right' then error('side outside member',0) end
-    -- Compare to stored boundaries, never s +/- epsilon. Evaluate each limit
-    -- at exactly 0 or L of the corresponding subelement.
-    for _,el in ipairs(m.elements) do
-        if s==el.x0 and side~='left' then return at_element(el,0) end
-        if s==el.x1 and side~='right' then return at_element(el,el.L) end
-        if s>el.x0 and s<el.x1 then return at_element(el,s-el.x0) end
+    local el=m.elements[1]
+    -- Exact lateral limit at each recovery cut; never sample s +/- epsilon.
+    for _,span in ipairs(el.spans) do
+        if s==span.x0 and side~='left' then return at_span(el,span,0,s) end
+        if s==span.x1 and side~='right' then return at_span(el,span,span.L,s) end
+        if s>span.x0 and s<span.x1 then return at_span(el,span,s-span.x0,s) end
     end
-    error('no subelement at s',0)
+    error('no recovery span at s',0)
 end
 -- Stable quadratic roots: Q=-0.5*(b+sign(b)*sqrt(D)); roots Q/a,c/Q.
 -- Avoids subtracting nearly equal values for the small root. Scale first.
@@ -435,24 +558,15 @@ end
 function Frame.moment_extrema(sol,member)
     local m=member_result(sol,member)
     local lo,xlo,hi,xhi=math.huge,0,-math.huge,0
-    for _,el in ipairs(m.elements) do
-        local candidates={0,el.L}
-        -- Preserve P1A arithmetic for uniform loads; otherwise solve
-        -- V(t)=V_i + qa*L*t + (qb-qa)*L*t^2/2, t=s/L.
-        if el.qa==el.qb then
-            if el.qa~=0 then
-                local s=-el.f[2]/el.qa
-                if s>0 and s<el.L then candidates[#candidates+1]=s end
-            end
-        else
-            for _,t in ipairs(quadratic_roots((el.qb-el.qa)*el.L/2,el.qa*el.L,el.f[2])) do
-                if t>0 and t<1 then candidates[#candidates+1]=t*el.L end
-            end
+    for _,span in ipairs(m.elements[1].spans) do
+        local candidates={0,span.L}
+        for _,t in ipairs(quadratic_roots(span.g*span.L^2/2,span.qa*span.L,span.V)) do
+            if t>0 and t<1 then candidates[#candidates+1]=t*span.L end
         end
         for _,s in ipairs(candidates) do
-            local _,_,v=nodal_to_diagram(el,s)
-            if v<lo then lo=v;xlo=el.x0+s end
-            if v>hi then hi=v;xhi=el.x0+s end
+            local _,v=span_value(span,s)
+            if v<lo then lo=v;xlo=span.x0+s end
+            if v>hi then hi=v;xhi=span.x0+s end
         end
     end
     return lo,xlo,hi,xhi
@@ -460,38 +574,13 @@ end
 function Frame.deflection_extrema(sol,member)
     local m=member_result(sol,member)
     local best,xbest=0,0
-    for _,el in ipairs(m.elements) do
-        local d,L=el.u,el.L
-        local function slope(s)
-            local t=s/L
-            local _,particular_slope=Frame.load_particular(L,el.EI,el.qa,el.qb,s)
-            return (-6*t+6*t^2)*d[2]/L+(1-4*t+3*t^2)*d[3]
-                 +(6*t-6*t^2)*d[5]/L+(-2*t+3*t^2)*d[6]
-                 +particular_slope
+    for _,span in ipairs(m.elements[1].spans) do
+        local function candidate(x)
+            local _,_,w=span_value(span,x)
+            if math.abs(w)>math.abs(best) then best=w;xbest=span.x0+x end
         end
-        local function candidate(s)
-            local w=displacement(el,s)
-            if math.abs(w)>math.abs(best) then best=w;xbest=el.x0+s end
-        end
-        candidate(0);candidate(L)
-        local a,fa=0,slope(0)
-        for i=1,64 do
-            local b=L*i/64
-            local fb=slope(b)
-            if fa==0 then candidate(a) end
-            if fb==0 then candidate(b) end
-            if fa~=0 and fb~=0 and (fa<0)~=(fb<0) then
-                local left,right,fleft=a,b,fa
-                while right-left>1e-12*L do
-                    local mid=(left+right)/2
-                    local fm=slope(mid)
-                    if fm==0 then left=mid;right=mid
-                    elseif (fm<0)==(fleft<0) then left=mid;fleft=fm else right=mid end
-                end
-                candidate((left+right)/2)
-            end
-            a,fa=b,fb
-        end
+        candidate(0);candidate(span.L)
+        roots_on_span(span,function(x) local _,_,_,theta=span_value(span,x);return theta end,candidate)
     end
     return best,xbest
 end

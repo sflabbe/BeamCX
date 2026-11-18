@@ -70,9 +70,13 @@ local function paint()
     return table.concat(gc.texts,'\n')
 end
 local function focus(c)
-    on.arrowUp();on.arrowLeft()
-    if c%2==0 then on.arrowRight() end
-    if c>=3 then on.arrowDown() end
+    on.arrowUp();on.arrowLeft();on.arrowLeft()
+    for i=2,math.min(c,3) do on.arrowRight() end
+    if c>=4 then
+        on.arrowLeft();on.arrowLeft();on.arrowDown()
+        if c==5 then on.arrowRight() end
+    end
+    assert(state().sel_index==c)
 end
 local function cursor_text()
     local s=state().result

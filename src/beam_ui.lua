@@ -1,6 +1,6 @@
--- BeamCX v0.4.0, UI (TI-Lua 5.1). Single productive Frame engine.
+-- BeamCX v0.5.0, UI (TI-Lua 5.1). Single productive Frame engine.
 local SectionDB=DB -- the offline DB from the generated single-file script
-local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
+local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUA'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
 local section={material=1,profile=6,b=250,h=450,manualEI=10000}
 local settings={self_weight=false,limit=250}
@@ -17,6 +17,42 @@ local result,err=nil,nil
 local summary,export_message=nil,nil
 local q_sw=nil -- available section self-weight; params.q always remains q_user
 
+local continuous={spans={6,6,6},left='PIN',right='PIN',g=10,q=5,
+    gG_sup=1.35,gG_inf=1,gQ=1.5}
+local samples,cursor_value,characteristic=nil,nil,nil
+local stale,calculating=true,false
+local table_page,edit_top,sec_top=1,1,1
+local selection_before=nil -- retained until the first deferred solve succeeds
+local function finite(v) return type(v)=='number' and v==v and math.abs(v)<math.huge end
+local function copy(t)
+    local out={}
+    for k,v in pairs(t) do out[k]=type(v)=='table' and copy(v) or v end
+    return out
+end
+local default_params,default_section,default_continuous=copy(params),copy(section),copy(continuous)
+local function continuous_parameters()
+    local p=copy(continuous)
+    p.EI=params.EI;p.limit=settings.limit
+    p.g=p.g+(settings.self_weight and q_sw or 0)
+    return p
+end
+local function continuous_rows()
+    local rows={{key='n',caption='n vanos',value=#continuous.spans}}
+    for i,L in ipairs(continuous.spans) do
+        rows[#rows+1]={key=i,caption='L'..i..' [m]',value=L}
+    end
+    for _,r in ipairs{{'left','Extremo izq.'},{'right','Extremo der.'},
+        {'g','g [kN/m]'},{'q','q [kN/m]'}, {'gG_sup','γG,sup'},
+        {'gG_inf','γG,inf'},{'gQ','γQ'}} do
+        rows[#rows+1]={key=r[1],caption=r[2],value=continuous[r[1]]}
+    end
+    return rows
+end
+local function dirty()
+    stale=true;calculating=false;samples=nil;cursor_value=nil;characteristic=nil
+    result=nil;summary=nil;export_message=nil;err=nil
+end
+
 local function fmt(x)
     if x==nil then return '--' end
     if math.abs(x)<1e-10 then return '0' end
@@ -32,6 +68,13 @@ local function lref_factor()
     return 1
 end
 local function recalc()
+    if params.support==5 then
+        local info,message=sec_info()
+        if not info then err=message;return false end
+        params.EI=info.EI;q_sw=info.q_sw
+        if q_sw==nil then settings.self_weight=false end
+        dirty();return true
+    end
     result=nil;summary=nil;export_message=nil
     local info,message=sec_info()
     if not info then result=nil;err=message;page=3;return end
@@ -49,21 +92,89 @@ local function recalc()
 end
 recalc()
 
+-- Only the timer invokes this calculation and creates the drawing cache.
+local function deflections_at(x)
+    local i=1
+    while i<#result.spans and x>result.supports[i+1].position do i=i+1 end
+    local local_x=x-result.spans[i].offset
+    return -Frame.at(characteristic[1],i,local_x).w*1000,
+        -Frame.at(characteristic[2],i,local_x).w*1000
+end
+local function cache_cursor()
+    if not result or not samples then return end
+    local total=result.supports[#result.supports].position
+    local x=cursor*total
+    for _,s in ipairs(result.supports) do
+        if math.abs(s.position-x)<1e-9*math.max(1,total) then x=s.position;break end
+    end
+    cursor_value=result.envelope_at(x) -- exactly one envelope query per movement
+    cursor_value.x=x
+    cursor_value.wodd,cursor_value.weven=deflections_at(x)
+    for i,s in ipairs(result.supports) do
+        if s.position==x and i>1 and i<#result.supports then
+            cursor_value.left=samples.supports[i].left
+            cursor_value.right=samples.supports[i].right
+        end
+    end
+end
+local function cache_samples()
+    characteristic={}
+    for parity=1,2 do
+        local factors={1}
+        for i=1,#continuous.spans do factors[i+1]=i%2==parity%2 and 1 or 0 end
+        characteristic[parity]=assert(Frame.combine(result.bases,factors))
+    end
+    samples={supports={}}
+    for i,span in ipairs(result.spans) do
+        for j=0,20 do
+            local x=span.offset+span.length*j/20
+            local side=j==20 and 'left' or 'right'
+            local v=result.envelope_at(x,side)
+            v.x=x;v.wodd,v.weven=deflections_at(x)
+            samples[#samples+1]=v
+            if j==0 then
+                samples.supports[i]=samples.supports[i] or {}
+                samples.supports[i].right=v
+            elseif j==20 then samples.supports[i+1]={left=v} end
+        end
+    end
+    cache_cursor()
+end
+local function rollback_selection(message)
+    if selection_before then
+        local b=selection_before
+        params=b.params;section=b.section;settings=b.settings
+        result=b.result;summary=b.summary;err=b.err;export_message=b.export_message
+        q_sw=b.q_sw;samples=b.samples;cursor_value=b.cursor_value;characteristic=b.characteristic
+        stale=b.stale;continuous=b.continuous
+        page=0;selector_error=message;selection_before=nil
+    else err=message;page=1 end
+end
 local function open_selected_system()
-    local before={support=params.support,EI=params.EI,result=result,summary=summary,
-        err=err,export_message=export_message,q_sw=q_sw,
-        self_weight=settings.self_weight,page=page}
+    local before={params=copy(params),section=copy(section),settings=copy(settings),
+        result=result,summary=summary,err=err,export_message=export_message,q_sw=q_sw,
+        samples=samples,cursor_value=cursor_value,characteristic=characteristic,
+        stale=stale,continuous=copy(continuous)}
     params.support=sel_index
-    recalc()
-    if result~=nil then
-        selector_error=nil;page=1
+    if sel_index==5 then
+        selection_before=before
+        if recalc() then selector_error=nil;page=1;edit_index=1;edit_top=1
+        else rollback_selection(err) end
     else
-        local message=err or 'calculation failed'
-        params.support=before.support;params.EI=before.EI
-        result=before.result;summary=before.summary;err=before.err
-        export_message=before.export_message;q_sw=before.q_sw
-        settings.self_weight=before.self_weight;page=before.page
-        selector_error=message
+        recalc()
+        if result~=nil then selector_error=nil;page=1;selection_before=nil;edit_index=1
+        else
+            selection_before=before
+            rollback_selection(err or 'calculation failed')
+        end
+    end
+end
+local function show_results()
+    page=2
+    if params.support==5 and stale then
+        calculating=true
+        platform.window:invalidate()
+        timer.start(0.05)
     end
 end
 
@@ -81,6 +192,13 @@ local function export_cas()
         {'bx_xwmax',summary.bx_xwmax},{'bx_ra',summary.bx_ra},
         {'bx_rb',summary.bx_rb},{'bx_ei',summary.bx_ei}
     }
+    if params.support==5 then
+        values={{'bc_mmax',summary.moment_max},{'bc_mmin',summary.moment_min},
+            {'bc_vabs',summary.shear_absolute_max},{'bc_rmax',summary.reaction_max},
+            {'bc_wmax',summary.deflection_absolute_max*1000},
+            {'bc_xwmax',summary.deflection_position},{'bc_ei',summary.rigidity},
+            {'bc_n',summary.span_count}}
+    end
     for _,v in ipairs(values) do
         if type(v[2])~='number' or v[2]~=v[2] or math.abs(v[2])==math.huge then
             export_message='CAS ERROR: invalid '..v[1];return
@@ -99,10 +217,18 @@ end
 
 local function color(gc,r,g,b) gc:setColorRGB(r,g,b) end
 local function label(gc,t,x,y) gc:drawString(t,x,y,'top') end
+local function fitted(gc,t,x,y,width)
+    while #t>0 and gc:getStringWidth(t)>width do
+        local last=#t
+        while last>1 and string.byte(t,last)>=128 and string.byte(t,last)<192 do last=last-1 end
+        t=string.sub(t,1,last-1)
+    end
+    label(gc,t,x,y)
+end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.4.0',6,4)
+    label(gc,'BeamCX | EB 2D | v0.5.0',6,4)
 end
 local function name_value(index)
     local key=names[index]
@@ -144,6 +270,35 @@ local function draw_edit(gc,w,h)
     label(gc,'TAB plot; TAB again = sections',7,h-19)
 end
 
+local function scroll_top(index,top,count)
+    if index<top then return index end
+    if index>=top+count then return index-count+1 end
+    return top
+end
+local function draw_continuous_edit(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',10)
+    label(gc,'CONTINUA | entrada',8,28)
+    local rows=continuous_rows()
+    local count=math.max(1,math.floor((h-94)/18))
+    edit_top=scroll_top(edit_index,edit_top,count)
+    for i=edit_top,math.min(#rows,edit_top+count-1) do
+        local row=rows[i]
+        local y=46+(i-edit_top)*18
+        if i==edit_index then
+            color(gc,213,232,245);gc:fillRect(6,y-1,w-12,18)
+            color(gc,18,44,66)
+        else color(gc,215,225,236) end
+        label(gc,row.caption,12,y)
+        local value=type(row.value)=='number' and fmt(row.value) or row.value
+        fitted(gc,i==edit_index and typing~=nil and typing..'_' or value,160,y,w-174)
+    end
+    gc:setFont('sansserif','r',9);color(gc,255,200,112)
+    fitted(gc,err or (stale and 'Desactualizado | TAB: calcular' or 'Resultado guardado'),7,h-45,w-14)
+    color(gc,171,193,207)
+    label(gc,'UP/DOWN fila | LEFT/RIGHT n, PIN/FIX',7,h-30)
+    label(gc,'ENTER aplicar | TAB resultados',7,h-16)
+end
+
 local function section_rows()
     local m=SectionDB.materials[section.material]
     local info=sec_info()
@@ -165,6 +320,9 @@ local function section_rows()
     end
     rows[#rows+1]={key='self_weight',caption='Self-weight',
         value=info and info.q_sw and (settings.self_weight and 'ON' or 'OFF') or 'N/A',editable=true}
+    if params.support==5 then
+        rows[#rows+1]={key='limit',caption='Limite flecha',value='L/'..settings.limit,editable=true}
+    end
     return rows
 end
 local function active_section_index()
@@ -176,8 +334,11 @@ local function draw_section(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
     label(gc,'OFFLINE MATERIAL / SECTION',8,29)
     local rows=active_section_index()
-    for i,row in ipairs(rows) do
-        local y=45+(i-1)*17
+    local count=params.support==5 and math.max(1,math.floor((h-82)/17)) or #rows
+    sec_top=params.support==5 and scroll_top(sec_index,sec_top,count) or 1
+    for i=sec_top,math.min(#rows,sec_top+count-1) do
+        local row=rows[i]
+        local y=45+(i-sec_top)*17
         if i==sec_index then
             color(gc,213,232,245);gc:fillRect(6,y-1,w-12,17)
             color(gc,18,44,66)
@@ -253,6 +414,12 @@ end
 -- Reference UDL moments / (q*L^2), independent of the current model.
 local selector_moment_ends={{0,0},{-1/2,0},{-1/12,-1/12},{-1/8,0}}
 local function selector_moment(index,xi)
+    if index==5 then
+        local i=math.min(3,math.floor(xi*3)+1)
+        local t=xi*3-(i-1)
+        local ends={0,-.1,-.1,0}
+        return t*(1-t)/2+ends[i]*(1-t)+ends[i+1]*t
+    end
     local ends=selector_moment_ends[index]
     return xi*(1-xi)/2+ends[1]*(1-xi)+ends[2]*xi
 end
@@ -262,12 +429,12 @@ local function draw_selector(gc,w,h)
     gc:setFont('sansserif','r',9)
     label(gc,'M (q>0)',w-76,28)
     local margin,gap,top=8,8,46
-    local card_w=(w-2*margin-gap)/2
+    local card_w=(w-2*margin-2*gap)/3
     local card_h=(h-43-top-gap)/2
     gc:setPen('thin','smooth')
-    for i=1,4 do
-        local x=margin+((i-1)%2)*(card_w+gap)
-        local y=top+math.floor((i-1)/2)*(card_h+gap)
+    for i=1,5 do
+        local x=margin+((i-1)%3)*(card_w+gap)
+        local y=top+math.floor((i-1)/3)*(card_h+gap)
         if i==sel_index then color(gc,213,232,245)
         else color(gc,23,46,62) end
         gc:fillRect(x,y,card_w,card_h)
@@ -275,11 +442,17 @@ local function draw_selector(gc,w,h)
         else color(gc,215,225,236) end
         -- Zones: name [y+2,y+14], schematic [y+15,y+33],
         -- moment [y+35,y+card_h-2]. The last zone follows the window height.
-        label(gc,presets[i],x+8,y+2)
-        local left,right,ybeam=x+21,x+card_w-21,y+22
+        gc:setFont('sansserif','r',9)
+        if gc:getStringWidth(presets[i])>card_w-8 then gc:setFont('sansserif','r',8) end
+        label(gc,presets[i],x+(card_w-gc:getStringWidth(presets[i]))/2,y+2)
+        local left,right,ybeam=x+12,x+card_w-12,y+22
         gc:drawLine(left,ybeam,right,ybeam)
-        mini_support(gc,left,ybeam,true,i~=1)
-        if i~=2 then mini_support(gc,right,ybeam,false,i==3) end
+        if i==5 then
+            for k=0,3 do mini_support(gc,left+(right-left)*k/3,ybeam,k==0,false) end
+        else
+            mini_support(gc,left,ybeam,true,i~=1)
+            if i~=2 then mini_support(gc,right,ybeam,false,i==3) end
+        end
         local moment_top,moment_bottom=y+35,y+card_h-2
         local moment_h=moment_bottom-moment_top
         if moment_h>=14 then
@@ -395,6 +568,92 @@ local function diagram(gc,w,h)
     label(gc,'UP/DOWN cursor | ENTER results',8,h-17)
 end
 
+local function draw_continuous_table(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',9)
+    label(gc,'CONTINUA | '..(table_page==1 and 'Vanos' or 'Apoyos')..' | L/'..settings.limit,7,27)
+    gc:setFont('sansserif','r',8)
+    if table_page==1 then
+        for _,c in ipairs{{'#',7},{'L [m]',27},{'M+ kNm',61},{'w mm',119},{'L/|w|',185},{'Estado',253}} do
+            label(gc,c[1],c[2],44)
+        end
+        for i,s in ipairs(result.spans) do
+            local y=59+(i-1)*13
+            local d=s.deflection
+            label(gc,tostring(i),7,y);label(gc,fmt(s.length),27,y)
+            label(gc,s.Mplus and fmt(s.Mplus.value) or '—',61,y)
+            label(gc,(d.governing.value<0 and '↑' or '↓')..fmt(d.governing.absolute*1000),119,y)
+            label(gc,d.ratio and fmt(d.ratio) or 'N/A',185,y)
+            label(gc,d.status,253,y)
+        end
+    else
+        for _,c in ipairs{{'#',7},{'Mmin',32},{'Mmax>0',104},{'Rmax',176},{'Rmin',248}} do
+            label(gc,c[1],c[2],44)
+        end
+        for i,s in ipairs(result.supports) do
+            local y=59+(i-1)*13
+            label(gc,tostring(i),7,y);label(gc,fmt(s.Mmin.value),32,y)
+            label(gc,s.Mmax.value>0 and fmt(s.Mmax.value) or '—',104,y)
+            label(gc,fmt(s.Rmax.value),176,y);label(gc,fmt(s.Rmin.value),248,y)
+        end
+    end
+    label(gc,'|V|max='..fmt(result.shear.value)..' kN | M kNm, R kN',7,h-69)
+    local p=result.parameters
+    label(gc,'γG,sup='..fmt(p.gG_sup)..'  γG,inf='..fmt(p.gG_inf)..'  γQ='..fmt(p.gQ),7,h-56)
+    label(gc,'γ: OPEN (EN 1990 A1 + NA)',7,h-43)
+    color(gc,128,222,181)
+    fitted(gc,export_message or 'ENTER: EXPORT CAS bc_*',7,h-29,w-14)
+    color(gc,171,193,207)
+    label(gc,'UP/DOWN tabla | LEFT/RIGHT modos | TAB seccion',7,h-15)
+end
+local function continuous_diagram(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',9)
+    local titles={'M envolvente [kNm]','V envolvente [kN]','w caracteristica [mm]'}
+    label(gc,'CONTINUA | '..titles[mode],7,28)
+    label(gc,mode==3 and 'Naranja: impares | Azul: pares' or 'Naranja: max | Azul: min',7,43)
+    local left,right=23,w-23
+    local total=result.supports[#result.supports].position
+    local function px(x) return left+(right-left)*x/total end
+    gc:setPen('thin','smooth');gc:drawLine(left,66,right,66)
+    for i,s in ipairs(result.supports) do
+        local clamp=(i==1 and continuous.left=='FIX') or (i==#result.supports and continuous.right=='FIX')
+        mini_support(gc,px(s.position),66,i==1,clamp)
+    end
+    local top,bottom=85,h-82
+    local mid=(top+bottom)/2
+    local keys=mode==1 and {'Mmax','Mmin'} or (mode==2 and {'Vmax','Vmin'} or {'wodd','weven'})
+    local scale=1e-10
+    for _,v in ipairs(samples) do
+        for _,key in ipairs(keys) do scale=math.max(scale,math.abs(v[key])) end
+    end
+    color(gc,115,132,148);gc:drawLine(left,mid,right,mid)
+    -- M and characteristic w are positive downward; V retains its usual sign.
+    local sign=mode==2 and -1 or 1
+    for k,key in ipairs(keys) do
+        if k==1 then color(gc,242,177,103) else color(gc,80,213,235) end
+        for j=1,#samples-1 do
+            local a,b=samples[j],samples[j+1]
+            gc:drawLine(px(a.x),mid+sign*(bottom-top)*.45*a[key]/scale,
+                px(b.x),mid+sign*(bottom-top)*.45*b[key]/scale)
+        end
+    end
+    local v=cursor_value
+    color(gc,173,198,210);gc:setPen('thin','dotted')
+    gc:drawLine(px(v.x),top,px(v.x),bottom)
+    color(gc,244,244,244);gc:setFont('sansserif','r',8)
+    label(gc,'x='..fmt(v.x)..' m',7,h-76)
+    if mode==3 then
+        label(gc,'w impares='..fmt(v.wodd)..' | pares='..fmt(v.weven)..' mm',7,h-61)
+    else
+        label(gc,'Mmax='..fmt(v.Mmax)..' | Mmin='..fmt(v.Mmin)..' kNm',7,h-61)
+        if v.left then
+            label(gc,'V izq max/min: '..fmt(v.left.Vmax)..' / '..fmt(v.left.Vmin)..' kN',7,h-47)
+            label(gc,'V der max/min: '..fmt(v.right.Vmax)..' / '..fmt(v.right.Vmin)..' kN',7,h-33)
+        else label(gc,'Vmax='..fmt(v.Vmax)..' | Vmin='..fmt(v.Vmin)..' kN',7,h-47) end
+    end
+    color(gc,171,193,207)
+    label(gc,'UP/DOWN cursor | LEFT/RIGHT modo | ENTER tabla',7,h-15)
+end
+
 on=on or {}
 function on.paint(gc)
     local w=platform.window:width()
@@ -402,19 +661,49 @@ function on.paint(gc)
     color(gc,12,25,36);gc:fillRect(0,0,w,h)
     header(gc,w)
     if page==0 then draw_selector(gc,w,h);return end
+    if params.support==5 and page==2 then
+        if calculating then
+            color(gc,255,200,112);gc:setFont('sansserif','r',12)
+            label(gc,'Calculando…',20,65)
+        elseif result and samples then
+            if mode==4 then draw_continuous_table(gc,w,h) else continuous_diagram(gc,w,h) end
+        end
+        return
+    end
     if page==3 then draw_section(gc,w,h)
     elseif page==2 and result then
         if mode==4 then draw_results(gc,w,h) else diagram(gc,w,h) end
+    elseif params.support==5 then draw_continuous_edit(gc,w,h)
     else draw_edit(gc,w,h) end
 end
 local function redraw() platform.window:invalidate() end
+function on.timer()
+    timer.stop()
+    if not calculating or params.support~=5 or page~=2 then return end
+    local ok,sol,message=pcall(ContinuousPreset.solve,continuous_parameters())
+    if ok and sol then
+        result=sol;summary=sol.summary
+        local cached,problem=pcall(cache_samples)
+        if not cached then ok=false;message=problem end
+    end
+    calculating=false
+    if ok and sol then stale=false;err=nil;selection_before=nil
+    else
+        if not ok and not message then message=sol end
+        samples=nil;cursor_value=nil;characteristic=nil;result=nil;summary=nil
+        rollback_selection(message or 'calculation failed')
+    end
+    redraw()
+end
 local function apply_edit(key,v)
     if key=='manualEI' or key=='b' or key=='h' then
         local old=section[key]
         section[key]=v
         local info,msg=sec_info()
         if not info then
-            section[key]=old;result=nil;summary=nil;export_message=nil;err=msg;return
+            section[key]=old
+            if params.support~=5 then result=nil;summary=nil end
+            export_message=nil;err=msg;return
         end
         recalc()
         return
@@ -432,11 +721,26 @@ local function apply_edit(key,v)
         if not recalc() then params[key]=old;params.a=olda end
     end
 end
+local function apply_continuous(key,v)
+    local candidate=copy(continuous)
+    if type(key)=='number' then candidate.spans[key]=v else candidate[key]=v end
+    local p=copy(candidate)
+    p.EI=params.EI;p.limit=settings.limit
+    p.g=p.g+(settings.self_weight and q_sw or 0)
+    local valid,message=ContinuousPreset.model(p,'G')
+    if not valid then err=message;return end
+    continuous=candidate;dirty()
+end
 local function commit()
     if typing==nil then return end
     local v=tonumber(typing)
     -- Invalid text never changed the model; retain its last valid solution.
     if v==nil then export_message=nil;err='invalid number'
+    elseif page==1 and params.support==5 then
+        local key=continuous_rows()[edit_index].key
+        if type(key)=='number' or key=='g' or key=='q' or key=='gG_sup' or key=='gG_inf' or key=='gQ' then
+            apply_continuous(key,v)
+        end
     elseif page==1 then apply_edit(names[edit_index],v)
     elseif page==3 then
         local row=active_section_index()[sec_index]
@@ -448,7 +752,19 @@ local function commit()
     typing=nil
 end
 local function step_selection(d)
-    if page==1 and edit_index==1 then
+    if page==1 and params.support==5 then
+        local key=continuous_rows()[edit_index].key
+        if key=='n' then
+            local n=math.max(2,math.min(ContinuousPreset.MAX_SPANS,#continuous.spans+d))
+            if n~=#continuous.spans then
+                local spans={}
+                for i=1,n do spans[i]=continuous.spans[i] or continuous.spans[#continuous.spans] end
+                continuous.spans=spans;dirty()
+            end
+        elseif key=='left' or key=='right' then
+            apply_continuous(key,continuous[key]=='PIN' and 'FIX' or 'PIN')
+        end
+    elseif page==1 and edit_index==1 then
         params.support=(params.support-1+d+4)%4+1
         recalc()
     elseif page==3 then
@@ -463,28 +779,36 @@ local function step_selection(d)
             local info=sec_info()
             if info and info.q_sw then settings.self_weight=not settings.self_weight end
             recalc()
+        elseif row.key=='limit' then
+            settings.limit=settings.limit==250 and 300 or 250
+            recalc()
         end
     end
 end
 function on.tabKey()
     if page==0 then return end
     commit()
-    if result then
-        if page==1 then page=2
+    if result or params.support==5 then
+        if page==1 then show_results()
         elseif page==2 then page=3
         elseif page==3 then page=1 end
     end
+    if calculating and page~=2 then timer.stop();calculating=false end
     redraw()
 end
 function on.enterKey()
     if page==0 then open_selected_system();redraw();return end
     if page==1 then
-        if edit_index==1 then step_selection(1) else commit() end
+        if params.support==5 then
+            if typing~=nil then commit() else step_selection(1) end
+        elseif edit_index==1 then step_selection(1) else commit() end
     elseif page==2 then
-        if mode==4 then export_cas() else mode=4 end
+        if not calculating then
+            if mode==4 then export_cas() else mode=4 end
+        end
     elseif page==3 then
         local row=active_section_index()[sec_index]
-        if row.key=='material' or row.key=='profile' or row.key=='self_weight' then step_selection(1)
+        if row.key=='material' or row.key=='profile' or row.key=='self_weight' or row.key=='limit' then step_selection(1)
         else commit() end
     end
     redraw()
@@ -492,10 +816,13 @@ end
 function on.charIn(ch)
     if page==0 then return end
     local can=false
-    if page==1 then can=edit_index~=1 and (names[edit_index]~='EI' or section.material==1)
+    if page==1 and params.support==5 then
+        local key=continuous_rows()[edit_index].key
+        can=key~='n' and key~='left' and key~='right'
+    elseif page==1 then can=edit_index~=1 and (names[edit_index]~='EI' or section.material==1)
     elseif page==3 then
         local row=active_section_index()[sec_index]
-        can=row.editable and row.key~='material' and row.key~='profile' and row.key~='self_weight'
+        can=row.editable and row.key~='material' and row.key~='profile' and row.key~='self_weight' and row.key~='limit'
     end
     if not can then return end
     if ch=='−' then ch='-' end -- TI handheld minus key can send U+2212
@@ -513,6 +840,7 @@ function on.escapeKey()
     if page==0 then return end
     if typing~=nil then typing=nil;err=nil
     else
+        if calculating then timer.stop();calculating=false end
         if result~=nil then err=nil end
         page=0;sel_index=params.support;selector_error=nil
     end
@@ -520,7 +848,8 @@ function on.escapeKey()
 end
 local function move_field(d)
     if page==1 then
-        edit_index=math.max(1,math.min(#names,edit_index+d))
+        local count=params.support==5 and #continuous_rows() or #names
+        edit_index=math.max(1,math.min(count,edit_index+d))
     elseif page==3 then
         local rows=section_rows()
         local i=sec_index+d
@@ -530,9 +859,27 @@ local function move_field(d)
         end
     end
 end
+local function move_continuous_cursor(d)
+    if not result or not samples then return end
+    local total=result.supports[#result.supports].position
+    local old=cursor*total
+    local x=math.max(0,math.min(total,old+d*.025*total))
+    -- Include every support in the cursor path, also with unequal span lengths.
+    for _,s in ipairs(result.supports) do
+        if d>0 and s.position>old+1e-9*total and s.position<x then x=s.position end
+        if d<0 and s.position<old-1e-9*total and s.position>x then x=s.position end
+    end
+    if x~=old then cursor=x/total;cache_cursor() end
+end
 function on.arrowUp()
     if page==0 then
-        if sel_index>2 then sel_index=sel_index-2 end
+        if sel_index>3 then sel_index=sel_index-3 end
+        redraw();return
+    end
+    if page==2 and params.support==5 then
+        if not calculating then
+            if mode==4 then table_page=1 else move_continuous_cursor(1) end
+        end
         redraw();return
     end
     if page==2 and mode==4 then
@@ -546,7 +893,13 @@ function on.arrowUp()
 end
 function on.arrowDown()
     if page==0 then
-        if sel_index<=2 then sel_index=sel_index+2 end
+        if sel_index<=3 then sel_index=math.min(5,sel_index+3) end
+        redraw();return
+    end
+    if page==2 and params.support==5 then
+        if not calculating then
+            if mode==4 then table_page=2 else move_continuous_cursor(-1) end
+        end
         redraw();return
     end
     if page==2 and mode==4 then
@@ -560,7 +913,7 @@ function on.arrowDown()
 end
 function on.arrowLeft()
     if page==0 then
-        if sel_index%2==0 then sel_index=sel_index-1 end
+        if (sel_index-1)%3>0 then sel_index=sel_index-1 end
         redraw();return
     end
     if page==2 then mode=(mode+2)%4+1
@@ -569,7 +922,7 @@ function on.arrowLeft()
 end
 function on.arrowRight()
     if page==0 then
-        if sel_index%2==1 then sel_index=sel_index+1 end
+        if (sel_index-1)%3<2 and sel_index<5 then sel_index=sel_index+1 end
         redraw();return
     end
     if page==2 then mode=mode%4+1
@@ -578,37 +931,62 @@ function on.arrowRight()
 end
 -- Saved inside the .tns document when the user saves it (TI Lua API on.save/restore).
 function on.save()
-    local p,s={},{}
-    for k,v in pairs(params) do p[k]=v end
-    for k,v in pairs(section) do s[k]=v end
-    return {params=p,section=s,page=page,mode=mode,cursor=cursor,
-        settings={self_weight=settings.self_weight,limit=settings.limit}}
+    return {format='0.5.0',params=copy(params),section=copy(section),
+        continuous=copy(continuous),page=page,mode=mode,cursor=cursor,
+        settings=copy(settings)}
 end
 function on.restore(data)
-    if type(data)~='table' then return end
+    if calculating then timer.stop() end
+    -- Only this release's format is accepted; reset before validating fields.
+    if type(data)~='table' or data.format~='0.5.0' then data={} end
+    params=copy(default_params);section=copy(default_section);continuous=copy(default_continuous)
     settings={self_weight=false,limit=250}
+    page=0;mode=1;cursor=.5;table_page=1;edit_index=1;sec_index=1;edit_top=1;sec_top=1
+    typing=nil;selector_error=nil;selection_before=nil
+    dirty()
+    local function integer(v,lo,hi) return finite(v) and v%1==0 and v>=lo and v<=hi end
     if type(data.settings)=='table' then
         settings.self_weight=data.settings.self_weight==true
         if data.settings.limit==300 then settings.limit=300 end
     end
-    typing=nil
     if type(data.section)=='table' then
         local s=data.section
-        local n={material=s.material,profile=s.profile,b=s.b,h=s.h,manualEI=s.manualEI}
-        if type(n.profile)=='number' and n.profile==math.floor(n.profile)
-           and n.profile>=1 and n.profile<=#SectionDB.profiles
-           and SectionDB.compute(n) then section=n end
+        if integer(s.material,1,#SectionDB.materials) then section.material=s.material end
+        if integer(s.profile,1,#SectionDB.profiles) then section.profile=s.profile end
+        for _,key in ipairs{'b','h','manualEI'} do
+            if finite(s[key]) and s[key]>0 then section[key]=s[key] end
+        end
+        local info=sec_info()
+        if not info or not finite(info.EI) or info.EI<=0 then section=copy(default_section) end
     end
     if type(data.params)=='table' then
         local p=data.params
-        if type(p.L)=='number' and type(p.q)=='number' and type(p.P)=='number'
-           and type(p.a)=='number' and type(p.support)=='number' then
-            params.L=p.L;params.q=p.q;params.P=p.P;params.a=p.a;params.support=p.support
+        if integer(p.support,1,5) then params.support=p.support end
+        if finite(p.L) and p.L>0 then params.L=p.L end
+        for _,key in ipairs{'q','P'} do if finite(p[key]) then params[key]=p[key] end end
+        params.a=math.min(default_params.a,params.L)
+        if finite(p.a) and p.a>=0 and p.a<=params.L then params.a=p.a end
+    end
+    if type(data.continuous)=='table' then
+        local c=data.continuous
+        if type(c.spans)=='table' and integer(#c.spans,2,ContinuousPreset.MAX_SPANS) then
+            continuous.spans={}
+            for i=1,#c.spans do
+                continuous.spans[i]=finite(c.spans[i]) and c.spans[i]>0 and c.spans[i] or 6
+            end
+        end
+        for _,key in ipairs{'left','right'} do
+            if c[key]=='PIN' or c[key]=='FIX' then continuous[key]=c[key] end
+        end
+        for _,key in ipairs{'g','q','gG_sup','gG_inf','gQ'} do
+            if finite(c[key]) and ((key=='g' or key=='q') or c[key]>0) then continuous[key]=c[key] end
         end
     end
     recalc()
-    if type(data.page)=='number' and data.page>=0 and data.page<=3 then page=data.page end
-    if page==0 then sel_index=params.support;selector_error=nil end
-    if type(data.mode)=='number' and data.mode>=1 and data.mode<=4 then mode=data.mode end
-    if type(data.cursor)=='number' and data.cursor>=0 and data.cursor<=1 then cursor=data.cursor end
+    if integer(data.page,0,3) then page=data.page end
+    if integer(data.mode,1,4) then mode=data.mode end
+    if finite(data.cursor) and data.cursor>=0 and data.cursor<=1 then cursor=data.cursor end
+    -- A saved results page opens at input: entry to results schedules the solve.
+    if params.support==5 and page==2 then page=1 end
+    sel_index=params.support
 end

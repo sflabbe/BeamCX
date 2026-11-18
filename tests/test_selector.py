@@ -45,10 +45,12 @@ local function unchanged(before,after,include_focus)
     end
 end
 local function focus(c)
-    assert(on.save().page==0)
-    on.arrowUp();on.arrowLeft()
-    if c==2 or c==4 then on.arrowRight() end
-    if c>=3 then on.arrowDown() end
+    on.arrowUp();on.arrowLeft();on.arrowLeft()
+    for i=2,math.min(c,3) do on.arrowRight() end
+    if c>=4 then
+        on.arrowLeft();on.arrowLeft();on.arrowDown()
+        if c==5 then on.arrowRight() end
+    end
     assert(state().sel_index==c)
 end
 
@@ -61,19 +63,19 @@ assert(state().selector_error==nil)
 assert(first.sel_index==nil and first.selector_error==nil,'temporary selector state must not be saved')
 print('PASS: selector initial page and temporary focus')
 
--- 2. All sixteen grid transitions, with clamping and no solves / editor changes.
+-- 2. All twenty grid transitions, with clamping and no solves / editor changes.
 local arrows={on.arrowUp,on.arrowDown,on.arrowLeft,on.arrowRight}
-local expected={{1,3,1,2},{2,4,1,2},{1,3,3,4},{2,4,3,4}}
+local expected={{1,4,1,2},{2,5,1,3},{3,5,2,3},{1,4,4,5},{2,5,4,5}}
 local original=Frame.solve
 local calls=0
 Frame.solve=function(p) calls=calls+1;return original(p) end
-for c=1,4 do
+for c=1,5 do
     for i,arrow in ipairs(arrows) do
         focus(c)
         local before,saved=state(),on.save()
         arrow()
         assert(state().sel_index==expected[c][i],'incorrect grid transition')
-        assert(state().sel_index>=1 and state().sel_index<=4)
+        assert(state().sel_index>=1 and state().sel_index<=5)
         unchanged(before,state(),false)
         same(saved,on.save())
     end
@@ -186,7 +188,7 @@ on.enterKey()
 assert(state().page==1 and state().support==3 and state().selector_error==nil)
 -- Preserve a prior model error too, when opening from an already failed model.
 local bad=on.save();bad.params.L=0;bad.page=1
-on.restore(bad);assert(state().err~=nil)
+on.restore(bad);assert(on.save().params.L==6 and state().err==nil)
 on.escapeKey();focus(2)
 before=state()
 original=BeamPreset.solve
@@ -213,8 +215,8 @@ end
 for _,invalid in ipairs{7,'x'} do
     local restored=on.save();restored.page=invalid
     on.restore(restored)
-    assert(on.save().page==3 and state().result~=nil)
-    on.tabKey();assert(on.save().page==1)
+    assert(on.save().page==0 and state().result~=nil)
+    on.enterKey();assert(on.save().page==1)
     on.escapeKey();assert(on.save().page==0)
     on.enterKey();assert(on.save().page==1)
     on.tabKey();on.tabKey();assert(on.save().page==3)
@@ -253,26 +255,19 @@ assert(failed.result==nil and failed.err~=nil)
 on.escapeKey();assert(state().page==0 and state().err==failed.err)
 print('PASS: Esc clears errors only for a valid result; invalid text recovery exports all CAS variables')
 
--- P3. Explicit v0.2-format document: no settings, preserved loads / section.
+-- P5B: old formats are intentionally rejected and use current defaults.
 fresh()
-local v02={params={L=8,q=7,P=12,a=3,EI=10000,support=4},
-    section={material=5,profile=10,b=250,h=450,manualEI=10000},
-    page=2,mode=2,cursor=0.25}
-on.restore(v02)
+on.restore{params={L=8,q=7,P=12,a=3,EI=10000,support=4},page=2,mode=2,cursor=.25}
 local restored=on.save()
-assert(restored.page==2 and restored.mode==2 and restored.cursor==0.25)
-for _,key in ipairs{'L','q','P','a','support'} do eq(restored.params[key],v02.params[key]) end
-same(restored.section,v02.section)
-eq(restored.params.EI,DB.compute(v02.section).EI)
-assert(restored.settings.self_weight==false and restored.settings.limit==250)
-eq(state().result.parameters.q,7)
+assert(restored.format=='0.5.0' and restored.page==0 and restored.params.support==1)
+eq(restored.params.L,6);eq(restored.params.q,10)
 fresh();focus(3);on.enterKey();on.escapeKey()
 local selector_saved=on.save()
 assert(selector_saved.page==0 and selector_saved.params.support==3)
 focus(1);fresh();on.restore(selector_saved)
 assert(state().page==0 and state().support==3 and state().sel_index==3)
 same(selector_saved,on.save())
-print('PASS: v0.2 loads / section restore on page 2 and saved selector restores focus to support 3')
+print('PASS: old formats rejected; current selector restores confirmed support')
 
 -- P2. Exercise the actual private formula used by painting, without exporting
 -- another app API. This is the only solver-based reference-silhouette test.
@@ -343,13 +338,13 @@ local function paint(c,has_error)
     Frame.solve=solve
     assert(paint_solves==0,'selector painting must never solve')
     unchanged(before,state(),true)
-    assert(#gc.fill==6,'expected background, header and four cards')
-    assert(#gc.curves==4*32,'expected four 32-segment moment silhouettes')
-    assert(#gc.schematics==39,'expected four compact beam/support schematics')
-    assert(#gc.axes==4,'expected one reference axis per card')
+    assert(#gc.fill==7,'expected background, header and five cards')
+    assert(#gc.curves==5*32,'expected five 32-segment moment silhouettes')
+    assert(#gc.schematics==55,'expected four compact beam/support schematics')
+    assert(#gc.axes==5,'expected one reference axis per card')
     assert(gc.lines==#gc.curves+#gc.axes+#gc.schematics)
     local highlighted=0
-    for i=3,6 do
+    for i=3,7 do
         if gc.fill[i].color[1]==213 then
             highlighted=highlighted+1
             assert(i-2==c,'incorrect card highlight')
@@ -358,9 +353,10 @@ local function paint(c,has_error)
     assert(highlighted==1)
     -- Cards have three disjoint zones at every supported window size.
     -- Name: 12 px; compact supports: 18 px; M: remaining height minus gaps.
-    local preset_names={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
-    local absolute_m={1/8,1/2,1/12,1/8}
-    for card=1,4 do
+    local preset_names={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUA'}
+    local absolute_m={1/8,1/2,1/12,1/8,0}
+    for j=0,32 do absolute_m[5]=math.max(absolute_m[5],math.abs(reference_moment(5,j/32))) end
+    for card=1,5 do
         local box=gc.fill[card+2]
         local name_top,name_bottom=box.y+2,box.y+14
         local scheme_top,scheme_bottom=box.y+15,box.y+33
@@ -369,14 +365,14 @@ local function paint(c,has_error)
         assert(moment_bottom-moment_top>=20,'tested windows need at least 20 px for M')
         assert(box.y>=46 and box.y+box.h<=height-43,'card invades title or error / footer')
         local mid=(moment_top+moment_bottom)/2
-        local left,right=box.x+21,box.x+box.w-21
+        local left,right=box.x+12,box.x+box.w-12
         local curves,axes,schematics=0,0,0
         local amplitude=0
         local found_name=false
         for _,text in ipairs(gc.texts) do
             if text.text==preset_names[card] then
                 found_name=true
-                assert(text.font==9 and text.y>=name_top and text.y+text.h<=name_bottom)
+                assert((text.font==9 or text.font==8) and text.y>=name_top and text.y+text.h<=name_bottom)
                 assert(text.x>=box.x and text.x+text.w<=box.x+box.w)
             end
         end
@@ -422,7 +418,7 @@ local function paint(c,has_error)
     local names={}
     local legend_count=0
     local error_visible=false
-    local cards_bottom=gc.fill[6].y+gc.fill[6].h
+    local cards_bottom=gc.fill[7].y+gc.fill[7].h
     for _,t in ipairs(gc.texts) do
         names[t.text]=true
         if t.text=='M (q>0)' then legend_count=legend_count+1 end
@@ -441,7 +437,8 @@ end
 for _,size in ipairs{{318,212},{320,212},{320,240}} do
     width,height=size[1],size[2]
     fresh()
-    for c=1,4 do paint(c,false) end
+    for c=1,5 do paint(c,false) end
+    focus(4)
     original=Frame.solve
     Frame.solve=function() return nil,string.rep('candidate failed ',10) end
     on.enterKey()
@@ -459,7 +456,7 @@ original=Frame.solve
 Frame.solve=function(p) solves_small=solves_small+1;return original(p) end
 on.paint(gc)
 Frame.solve=original
-assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==39 and solves_small==0)
+assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==55 and solves_small==0)
 print('PASS: short silhouette zones omit M while retaining the compact support schematics')
 '''
 vm = lib.luaL_newstate()

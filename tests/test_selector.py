@@ -49,7 +49,7 @@ local function focus(c)
     for i=2,math.min(c,3) do on.arrowRight() end
     if c>=4 then
         on.arrowLeft();on.arrowLeft();on.arrowDown()
-        if c==5 then on.arrowRight() end
+        for i=5,c do on.arrowRight() end
     end
     assert(state().sel_index==c)
 end
@@ -65,17 +65,17 @@ print('PASS: selector initial page and temporary focus')
 
 -- 2. All twenty grid transitions, with clamping and no solves / editor changes.
 local arrows={on.arrowUp,on.arrowDown,on.arrowLeft,on.arrowRight}
-local expected={{1,4,1,2},{2,5,1,3},{3,5,2,3},{1,4,4,5},{2,5,4,5}}
+local expected={{1,4,1,2},{2,5,1,3},{3,6,2,3},{1,4,4,5},{2,5,4,6},{3,6,5,6}}
 local original=Frame.solve
 local calls=0
 Frame.solve=function(p) calls=calls+1;return original(p) end
-for c=1,5 do
+for c=1,6 do
     for i,arrow in ipairs(arrows) do
         focus(c)
         local before,saved=state(),on.save()
         arrow()
         assert(state().sel_index==expected[c][i],'incorrect grid transition')
-        assert(state().sel_index>=1 and state().sel_index<=5)
+        assert(state().sel_index>=1 and state().sel_index<=6)
         unchanged(before,state(),false)
         same(saved,on.save())
     end
@@ -259,7 +259,7 @@ print('PASS: Esc clears errors only for a valid result; invalid text recovery ex
 fresh()
 on.restore{params={L=8,q=7,P=12,a=3,EI=10000,support=4},page=2,mode=2,cursor=.25}
 local restored=on.save()
-assert(restored.format=='0.5.0' and restored.page==0 and restored.params.support==1)
+assert(restored.format=='0.6.0' and restored.page==0 and restored.params.support==1)
 eq(restored.params.L,6);eq(restored.params.q,10)
 fresh();focus(3);on.enterKey();on.escapeKey()
 local selector_saved=on.save()
@@ -338,13 +338,13 @@ local function paint(c,has_error)
     Frame.solve=solve
     assert(paint_solves==0,'selector painting must never solve')
     unchanged(before,state(),true)
-    assert(#gc.fill==7,'expected background, header and five cards')
-    assert(#gc.curves==5*32,'expected five 32-segment moment silhouettes')
-    assert(#gc.schematics==55,'expected four compact beam/support schematics')
+    assert(#gc.fill==8,'expected background, header and six cards')
+    assert(#gc.curves==5*32+18,'five unchanged beam silhouettes and portal reference')
+    assert(#gc.schematics==66,'five unchanged schematics and portal fixed frame')
     assert(#gc.axes==5,'expected one reference axis per card')
     assert(gc.lines==#gc.curves+#gc.axes+#gc.schematics)
     local highlighted=0
-    for i=3,7 do
+    for i=3,8 do
         if gc.fill[i].color[1]==213 then
             highlighted=highlighted+1
             assert(i-2==c,'incorrect card highlight')
@@ -442,7 +442,7 @@ end
 for _,size in ipairs{{318,212},{320,212},{320,240}} do
     width,height=size[1],size[2]
     fresh()
-    for c=1,5 do paint(c,false) end
+    for c=1,6 do paint(c,false) end
     focus(4)
     original=Frame.solve
     Frame.solve=function() return nil,string.rep('candidate failed ',10) end
@@ -461,7 +461,7 @@ original=Frame.solve
 Frame.solve=function(p) solves_small=solves_small+1;return original(p) end
 on.paint(gc)
 Frame.solve=original
-assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==55 and solves_small==0)
+assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==66 and solves_small==0)
 print('PASS: short silhouette zones omit M while retaining the compact support schematics')
 '''
 vm = lib.luaL_newstate()

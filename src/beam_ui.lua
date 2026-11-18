@@ -1,6 +1,6 @@
--- BeamCX v0.5.0, UI (TI-Lua 5.1). Single productive Frame engine.
+-- BeamCX v0.6.0, UI (TI-Lua 5.1). Single productive Frame engine.
 local SectionDB=DB -- the offline DB from the generated single-file script
-local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUOUS'}
+local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUOUS','PORTAL'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
 local section={material=1,profile=6,b=250,h=450,manualEI=10000}
 local settings={self_weight=false,limit=250}
@@ -20,6 +20,12 @@ local q_sw=nil -- available section self-weight; params.q always remains q_user
 
 local continuous={spans={6,6,6},left='PIN',right='PIN',g=10,q=5,
     gG_sup=1.35,gG_inf=1,gQ=1.5}
+local portal={h=4,l=6,base='FIX',EIc=10000,EIb=15000,q=10,P=0,a=3,H=0,w=0}
+local portal_fields={{'base','Base'},{'h','Height h [m]'},{'l','Width l [m]'},
+    {'EIc','EI columns [kNm2]'},{'EIb','EI beam [kNm2]'},{'q','Beam q [kN/m]'},
+    {'P','Beam P [kN]'},{'a','Position a [m]'},{'H','Nodal H [kN]'},{'w','Wind w [kN/m]'}}
+local portal_member,portal_s,portal_side=2,3,'left'
+local portal_confirmed=nil
 local samples,cursor_value,characteristic=nil,nil,nil
 local stale,calculating=true,false
 local table_page,edit_top,sec_top=1,1,1
@@ -31,6 +37,7 @@ local function copy(t)
     return out
 end
 local default_params,default_section,default_continuous=copy(params),copy(section),copy(continuous)
+local default_portal=copy(portal)
 local function continuous_parameters()
     local p=copy(continuous)
     p.EI=params.EI;p.limit=settings.limit
@@ -53,6 +60,9 @@ local function dirty()
     stale=true;calculating=false;samples=nil;cursor_value=nil;characteristic=nil
     result=nil;summary=nil;export_message=nil;err=nil
 end
+local function dirty_portal()
+    stale=true;calculating=false;samples=nil;cursor_value=nil;export_message=nil;err=nil
+end
 
 local function fmt(x)
     if x==nil then return '--' end
@@ -70,6 +80,7 @@ local function lref_factor()
     return 1
 end
 local function recalc()
+    if params.support==6 then dirty_portal();return true end
     if params.support==5 then
         local info,message=sec_info()
         if not info then err=message;return false end
@@ -104,6 +115,13 @@ local function deflections_at(x)
 end
 local function cache_cursor()
     if not result or not samples then return end
+    if params.support==6 then
+        local L=portal_member==2 and portal.l or portal.h
+        portal_s=math.max(0,math.min(L,portal_s))
+        if portal_s==0 then portal_side='right' elseif portal_s==L then portal_side='left' end
+        cursor_value=PortalPreset.at(result,portal_member,portal_s,portal_side)
+        return
+    end
     local total=result.supports[#result.supports].position
     local x=cursor*total
     for _,s in ipairs(result.supports) do
@@ -118,6 +136,73 @@ local function cache_cursor()
             cursor_value.right=samples.supports[i].right
         end
     end
+end
+local function cache_portal()
+    samples={members={},scales={M=0,V=0,N=0},vabs={},table={}}
+    local max_displacement=0
+    for member=1,3 do
+        local L=member==2 and portal.l or portal.h
+        local positions={0,L}
+        for j=1,19 do positions[#positions+1]=L*j/20 end
+        if member==2 and portal.P~=0 and portal.a>0 and portal.a<L then positions[#positions+1]=portal.a end
+        table.sort(positions)
+        local data={};samples.members[member]=data
+        local last=nil
+        for _,s in ipairs(positions) do
+            if s~=last then
+                local sides={s==0 and 'right' or 'left'}
+                if member==2 and portal.P~=0 and s==portal.a and s>0 and s<L then sides={'left','right'} end
+                for _,side in ipairs(sides) do
+                    local v=PortalPreset.at(result,member,s,side)
+                    v.s=s;v.side=side
+                    -- Local x bottom->top on BOTH columns; beam left->right.
+                    if member==2 then v.x=s;v.y=portal.h;v.dx=v.u;v.dy=v.w
+                    else v.x=member==1 and 0 or portal.l;v.y=s;v.dx=-v.w;v.dy=v.u end
+                    max_displacement=math.max(max_displacement,math.abs(v.dx),math.abs(v.dy))
+                    data[#data+1]=v
+                end
+            end
+            last=s
+        end
+        -- V is linear between the endpoint/P cuts in this preset. These
+        -- exact cuts determine |V|max, independently of screen sampling.
+        local cuts={{0,'right'},{L,'left'}}
+        if member==2 and portal.P~=0 and portal.a>0 and portal.a<L then
+            cuts[#cuts+1]={portal.a,'left'};cuts[#cuts+1]={portal.a,'right'}
+        end
+        local vabs=0
+        for _,cut in ipairs(cuts) do vabs=math.max(vabs,math.abs(PortalPreset.at(result,member,cut[1],cut[2]).V)) end
+        samples.vabs[member]=vabs;samples.scales.V=math.max(samples.scales.V,vabs)
+        local m=result.members[member]
+        samples.scales.M=math.max(samples.scales.M,math.abs(m.moments.minimum.value),math.abs(m.moments.maximum.value))
+        samples.scales.N=math.max(samples.scales.N,m.axial.absolute)
+    end
+    samples.magnification=max_displacement>0 and .12*math.max(portal.h,portal.l)/max_displacement or 1
+    local function row(caption,value) samples.table[#samples.table+1]={caption,value} end
+    for _,side in ipairs{'left','right'} do
+        local r=result.reactions[side]
+        row(side..' base H [kN]',fmt(r.H));row(side..' base V [kN]',fmt(r.V))
+        row(side..' base M [kNm]',r.M and fmt(r.M) or '—')
+    end
+    for i,m in ipairs(result.members) do
+        row('Member '..i..' N [kN]',fmt(m.axial.value))
+        row('M'..i..' min [kNm]',fmt(m.moments.minimum.value)..' @ '..fmt(m.moments.minimum.position)..' m')
+        row('M'..i..' max [kNm]',fmt(m.moments.maximum.value)..' @ '..fmt(m.moments.maximum.position)..' m')
+        row('Member '..i..' |V|max [kN]',fmt(samples.vabs[i]))
+    end
+    for _,side in ipairs{'left','right'} do
+        row(side..' corner col [kNm]',fmt(result.corners[side].column))
+        row(side..' corner beam [kNm]',fmt(result.corners[side].beam))
+    end
+    for _,side in ipairs{'left','right'} do
+        local drift=result.drift[side]
+        row(side..' drift [mm]',fmt(drift*1000))
+        row(side..' h/|drift|',drift~=0 and fmt(portal.h/math.abs(drift)) or '—')
+    end
+    row('Beam w_rel [mm]',fmt(result.deflection.value*1000))
+    row('Beam l/|w_rel|',result.deflection.absolute>0 and fmt(portal.l/result.deflection.absolute) or '—')
+    row('w_rel position [m]',fmt(result.deflection.position))
+    cache_cursor()
 end
 local function cache_samples()
     characteristic={}
@@ -148,7 +233,10 @@ local function rollback_selection(message)
         params=b.params;section=b.section;settings=b.settings
         result=b.result;summary=b.summary;err=b.err;export_message=b.export_message
         q_sw=b.q_sw;samples=b.samples;cursor_value=b.cursor_value;characteristic=b.characteristic
-        stale=b.stale;continuous=b.continuous
+        stale=b.stale;continuous=b.continuous;portal=b.portal
+        portal_confirmed=b.portal_confirmed
+        mode=b.mode;table_page=b.table_page;edit_index=b.edit_index;edit_top=b.edit_top
+        portal_member=b.portal_member;portal_s=b.portal_s;portal_side=b.portal_side
         page=0;selector_error=message;selection_before=nil
     else err=message;page=1 end
 end
@@ -156,9 +244,16 @@ local function open_selected_system()
     local before={params=copy(params),section=copy(section),settings=copy(settings),
         result=result,summary=summary,err=err,export_message=export_message,q_sw=q_sw,
         samples=samples,cursor_value=cursor_value,characteristic=characteristic,
-        stale=stale,continuous=copy(continuous)}
+        stale=stale,continuous=copy(continuous),portal=copy(portal),portal_confirmed=portal_confirmed,
+        mode=mode,table_page=table_page,edit_index=edit_index,edit_top=edit_top,
+        portal_member=portal_member,portal_s=portal_s,portal_side=portal_side}
     params.support=sel_index
-    if sel_index==5 then
+    if sel_index~=6 then mode=math.min(mode,4) end
+    if sel_index==6 then
+        selection_before=before.params.support~=6 and before or nil
+        selector_error=nil;page=1;edit_index=1;edit_top=1;mode=1;table_page=1
+        if before.params.support~=6 then dirty_portal() end
+    elseif sel_index==5 then
         selection_before=before
         if recalc() then selector_error=nil;page=1;edit_index=1;edit_top=1
         else rollback_selection(err) end
@@ -173,7 +268,8 @@ local function open_selected_system()
 end
 local function show_results()
     page=2
-    if params.support==5 and stale then
+    if params.support==6 and not stale then err=nil end
+    if (params.support==5 or params.support==6) and stale then
         calculating=true
         platform.window:invalidate()
         timer.start(0.05)
@@ -182,7 +278,7 @@ end
 
 local function export_cas()
     export_message=nil
-    if not result or not summary or err then
+    if not result or not summary or err or (params.support==6 and stale) then
         export_message='CAS BLOCKED: solve first';return
     end
     if not var or type(var.store)~='function' then
@@ -200,6 +296,17 @@ local function export_cas()
             {'bc_wmax',summary.deflection_absolute_max*1000},
             {'bc_xwmax',summary.deflection_position},{'bc_ei',summary.rigidity},
             {'bc_n',summary.span_count}}
+    elseif params.support==6 then
+        local r=result.reactions
+        local mmax,mmin=-math.huge,math.huge
+        for _,m in ipairs(result.members) do
+            mmax=math.max(mmax,m.moments.maximum.value);mmin=math.min(mmin,m.moments.minimum.value)
+        end
+        values={{'bp_hl',r.left.H},{'bp_vl',r.left.V},{'bp_ml',r.left.M or 0},
+            {'bp_hr',r.right.H},{'bp_vr',r.right.V},{'bp_mr',r.right.M or 0},
+            {'bp_mmax',mmax},{'bp_mmin',mmin},{'bp_nabs',samples.scales.N},{'bp_vabs',samples.scales.V},
+            {'bp_dxl',result.drift.left*1000},{'bp_dxr',result.drift.right*1000},
+            {'bp_wrel',result.deflection.value*1000},{'bp_xwrel',result.deflection.position}}
     end
     for _,v in ipairs(values) do
         if type(v[2])~='number' or v[2]~=v[2] or math.abs(v[2])==math.huge then
@@ -214,7 +321,7 @@ local function export_cas()
             return -- Earlier stores may have succeeded; never report full success.
         end
     end
-    export_message='CAS: 8 variables stored'
+    export_message='CAS: '..#values..' variables stored'
 end
 
 local function color(gc,r,g,b) gc:setColorRGB(r,g,b) end
@@ -254,7 +361,7 @@ end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.5.0',6,4)
+    label(gc,'BeamCX | EB 2D | v0.6.0',6,4)
 end
 local function name_value(index)
     local key=names[index]
@@ -454,7 +561,7 @@ local function draw_selector(gc,w,h)
     local card_w=(w-2*margin-2*gap)/3
     local card_h=(h-43-top-gap)/2
     gc:setPen('thin','smooth')
-    for i=1,5 do
+    for i=1,6 do
         local x=margin+((i-1)%3)*(card_w+gap)
         local y=top+math.floor((i-1)/3)*(card_h+gap)
         if i==sel_index then color(gc,213,232,245)
@@ -467,6 +574,26 @@ local function draw_selector(gc,w,h)
         gc:setFont('sansserif','r',9)
         if gc:getStringWidth(presets[i])>card_w-8 then gc:setFont('sansserif','r',8) end
         label(gc,presets[i],x+(card_w-gc:getStringWidth(presets[i]))/2,y+2)
+        if i==6 then
+            local left,right,top,bottom=x+24,x+card_w-24,y+18,y+card_h-8
+            gc:drawLine(left,bottom,left,top);gc:drawLine(left,top,right,top);gc:drawLine(right,top,right,bottom)
+            color(gc,91,195,203)
+            for _,base in ipairs{left,right} do
+                gc:drawLine(base-6,bottom,base+6,bottom)
+                for k=-1,1 do gc:drawLine(base+k*4,bottom,base+k*4-2,bottom+3) end
+            end
+            if card_h>=55 then
+                -- Illustrative fixed portal under q>0, unrelated to live inputs.
+                color(gc,242,177,103)
+                gc:drawLine(left+3,bottom,left-6,top)
+                gc:drawLine(right-3,bottom,right+6,top)
+                for k=0,15 do
+                    local a,b=k/16,(k+1)/16
+                    gc:drawLine(left+(right-left)*a,top-6+32*a*(1-a),
+                        left+(right-left)*b,top-6+32*b*(1-b))
+                end
+            end
+        else
         local left,right,ybeam=x+12,x+card_w-12,y+22
         gc:drawLine(left,ybeam,right,ybeam)
         if i==5 then
@@ -494,6 +621,7 @@ local function draw_selector(gc,w,h)
                     x1,mid+data[j+1]*moment_h/(2*max_m))
             end
         end
+        end -- beam/continuous reference card
     end
     gc:setFont('sansserif','r',9)
     if restore_notice then
@@ -678,12 +806,142 @@ local function continuous_diagram(gc,w,h)
 end
 
 on=on or {}
+local function draw_portal_edit(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',10)
+    label(gc,'PORTAL | Input',8,28)
+    local count=math.max(1,math.floor((h-94)/18))
+    edit_top=scroll_top(edit_index,edit_top,count)
+    for i=edit_top,math.min(10,edit_top+count-1) do
+        local field=portal_fields[i];local y=46+(i-edit_top)*18
+        if i==edit_index then color(gc,213,232,245);gc:fillRect(6,y-1,w-12,18);color(gc,18,44,66)
+        else color(gc,215,225,236) end
+        fitted(gc,field[2],12,y,170,10)
+        local value=portal[field[1]]
+        if type(value)=='number' then value=fmt(value) end
+        fitted(gc,i==edit_index and typing~=nil and typing..'_' or value,186,y,w-198,10)
+    end
+    color(gc,255,200,112);gc:setFont('sansserif','r',9)
+    fitted(gc,err or (stale and 'Outdated | TAB: calculate' or 'Result saved'),7,h-45,w-14)
+    color(gc,171,193,207)
+    label(gc,'UP/DOWN field | LEFT/RIGHT base',7,h-30)
+    label(gc,'ENTER apply | TAB results | ESC systems',7,h-16)
+end
+local function portal_arrow(gc,x0,y0,x1,y1)
+    local dx,dy=x1-x0,y1-y0
+    local L=math.sqrt(dx*dx+dy*dy);dx=dx/L;dy=dy/L
+    local bx,by=x1-5*dx,y1-5*dy
+    gc:drawLine(x0,y0,bx,by)
+    gc:fillPolygon({bx-3*dy,by+3*dx,bx+3*dy,by-3*dx,x1,y1})
+end
+local function draw_portal_table(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',9)
+    label(gc,'PORTAL | Results',7,28)
+    local count=math.max(1,math.floor((h-100)/15))
+    table_page=math.max(1,math.min(#samples.table-count+1,table_page))
+    for i=table_page,math.min(#samples.table,table_page+count-1) do
+        local row=samples.table[i];local y=46+(i-table_page)*15
+        fitted(gc,row[1],8,y,166,9);fitted(gc,row[2],178,y,w-186,9)
+    end
+    color(gc,255,200,112);label(gc,'limits: OPEN (project / NA)',7,h-47)
+    color(gc,128,222,181);fitted(gc,export_message or 'ENTER: EXPORT CAS bp_* (14)',7,h-31,w-14,9)
+    color(gc,171,193,207);gc:setFont('sansserif','r',8)
+    label(gc,'UP/DOWN scroll | LEFT/RIGHT mode | TAB input',7,h-15)
+end
+local function portal_diagram(gc,w,h)
+    local titles={'M [kNm] | + tension side','V [kN] | local +y side','N [kN] | + tension','Deformed | absolute'}
+    color(gc,215,225,236);gc:setFont('sansserif','r',9)
+    fitted(gc,'PORTAL '..portal.base..' | '..titles[mode],7,28,w-14,9)
+    fitted(gc,'q='..fmt(portal.q)..' P='..fmt(portal.P)..' H='..fmt(portal.H)..' w='..fmt(portal.w),7,43,w-14,8)
+    local scale=math.min((w-100)/portal.l,(h-164)/portal.h)
+    local left=(w-portal.l*scale)/2
+    local bottom=h-82
+    local function px(x) return left+x*scale end
+    local function py(y) return bottom-y*scale end
+    gc:setPen('thin','smooth')
+    -- Original geometry, including both bottom->top columns.
+    for i,data in ipairs(samples.members) do
+        if i==portal_member then color(gc,151,184,203) else color(gc,79,105,125) end
+        gc:drawLine(px(data[1].x),py(data[1].y),px(data[#data].x),py(data[#data].y))
+    end
+    color(gc,91,195,203)
+    for _,x in ipairs{0,portal.l} do
+        local xx,yy=px(x),py(0)
+        if portal.base=='FIX' then
+            gc:drawLine(xx-8,yy,xx+8,yy)
+            for k=-1,1 do gc:drawLine(xx+k*5,yy,xx+k*5-3,yy+5) end
+        else
+            gc:drawLine(xx,yy,xx-7,yy+9);gc:drawLine(xx,yy,xx+7,yy+9);gc:drawLine(xx-7,yy+9,xx+7,yy+9)
+        end
+    end
+    color(gc,246,207,97)
+    local function vertical(load,x,length)
+        if load~=0 then
+            local a,b=py(portal.h)-length,py(portal.h)
+            if load<0 then a,b=b,a end
+            portal_arrow(gc,px(x),a,px(x),b)
+        end
+    end
+    if portal.q~=0 then for k=1,3 do vertical(portal.q,portal.l*k/4,12) end end
+    vertical(portal.P,portal.a,22)
+    local function horizontal(load,y,length)
+        if load~=0 then
+            local a,b=px(0)-length,px(0)
+            if load<0 then a,b=b,a end
+            portal_arrow(gc,a,py(y),b,py(y))
+        end
+    end
+    horizontal(portal.H,portal.h,24)
+    if portal.w~=0 then for k=1,3 do horizontal(portal.w,portal.h*k/4,17) end end
+    local key=({'M','V','N'})[mode]
+    for i,data in ipairs(samples.members) do
+        local function plot(v)
+            if mode==4 then return px(v.x+samples.magnification*v.dx),py(v.y+samples.magnification*v.dy) end
+            local amplitude=samples.scales[key]>0 and 18*v[key]/samples.scales[key] or 0
+            -- M uses -local y (tension). V/N use +local y, with an explicit legend.
+            local sign=mode==1 and -1 or 1
+            if i==2 then return px(v.x),py(v.y)-sign*amplitude end
+            return px(v.x)-sign*amplitude,py(v.y)
+        end
+        if mode==3 and data[1].N<0 then color(gc,80,213,235) else color(gc,242,177,103) end
+        for j=1,#data-1 do
+            local a,b=data[j],data[j+1]
+            local ax,ay=plot(a);local bx,by=plot(b)
+            -- Equal-s left/right entries draw the exact V jump, never a diagonal.
+            gc:drawLine(ax,ay,bx,by)
+        end
+        if mode~=4 then
+            for _,j in ipairs{1,#data} do
+                local v=data[j];local x,y=plot(v);gc:drawLine(px(v.x),py(v.y),x,y)
+            end
+        end
+    end
+    if cursor_value then
+        local x,y=portal_member==2 and portal_s or (portal_member==1 and 0 or portal.l),portal_member==2 and portal.h or portal_s
+        color(gc,255,255,255);gc:fillRect(px(x)-2,py(y)-2,4,4)
+        gc:setFont('sansserif','r',9)
+        local side=portal_member==2 and portal.P~=0 and portal_s==portal.a and (' '..portal_side) or ''
+        label(gc,'MEMBER '..portal_member..' | '..(portal_member==2 and 'BEAM' or 'COLUMN')..' | s='..fmt(portal_s)..side,7,h-64)
+        fitted(gc,'N='..fmt(cursor_value.N)..' V='..fmt(cursor_value.V)..' kN  M='..fmt(cursor_value.M)..' kNm',7,h-48,w-14,9)
+    end
+    color(gc,171,193,207);gc:setFont('sansserif','r',8)
+    fitted(gc,mode==4 and ('Magnification x'..fmt(samples.magnification)..' | beam w_rel in table') or '1/2/3 member | UP/DOWN s | ENTER table',7,h-31,w-14,8)
+    label(gc,'LEFT/RIGHT mode | TAB input | ESC systems',7,h-15)
+end
 function on.paint(gc)
     local w=platform.window:width()
     local h=platform.window:height()
     color(gc,12,25,36);gc:fillRect(0,0,w,h)
     header(gc,w)
     if page==0 then draw_selector(gc,w,h);return end
+    if params.support==6 then
+        if page==1 then draw_portal_edit(gc,w,h)
+        elseif calculating then
+            color(gc,255,200,112);gc:setFont('sansserif','r',12);label(gc,'Calculating...',20,65)
+        elseif result and samples and not stale then
+            if mode==5 then draw_portal_table(gc,w,h) else portal_diagram(gc,w,h) end
+        end
+        return
+    end
     if params.support==5 and page==2 then
         if calculating then
             color(gc,255,200,112);gc:setFont('sansserif','r',12)
@@ -702,19 +960,30 @@ end
 local function redraw() platform.window:invalidate() end
 function on.timer()
     timer.stop()
-    if not calculating or params.support~=5 or page~=2 then return end
-    local ok,sol,message=pcall(ContinuousPreset.solve,continuous_parameters())
+    if not calculating or (params.support~=5 and params.support~=6) or page~=2 then return end
+    local isportal=params.support==6
+    local ok,sol,message
+    if isportal then ok,sol,message=pcall(PortalPreset.solve,copy(portal))
+    else ok,sol,message=pcall(ContinuousPreset.solve,continuous_parameters()) end
     if ok and sol then
         result=sol;summary=sol.summary
-        local cached,problem=pcall(cache_samples)
+        local cached,problem=pcall(isportal and cache_portal or cache_samples)
         if not cached then ok=false;message=problem end
     end
     calculating=false
-    if ok and sol then stale=false;err=nil;selection_before=nil
+    if ok and sol then
+        stale=false;err=nil;selection_before=nil
+        if isportal then portal_confirmed={parameters=copy(portal),result=result,samples=samples} end
     else
         if not ok and not message then message=sol end
-        samples=nil;cursor_value=nil;characteristic=nil;result=nil;summary=nil
-        rollback_selection(message or 'calculation failed')
+        if isportal and not selection_before and portal_confirmed then
+            portal=copy(portal_confirmed.parameters);result=portal_confirmed.result;summary=result.summary
+            samples=portal_confirmed.samples;stale=false;cache_cursor()
+            page=1;err=message or 'calculation failed'
+        else
+            samples=nil;cursor_value=nil;characteristic=nil;result=nil;summary=nil
+            rollback_selection(message or 'calculation failed')
+        end
     end
     redraw()
 end
@@ -754,11 +1023,21 @@ local function apply_continuous(key,v)
     if not valid then err=message;return end
     continuous=candidate;dirty()
 end
+local function apply_portal(key,value)
+    local candidate=copy(portal);candidate[key]=value
+    if key=='l' and candidate.P==0 and finite(value) and value>0 and candidate.a>value then candidate.a=value/2 end
+    local valid,message=PortalPreset.model(candidate)
+    if not valid then err=message;export_message=nil;return end
+    if candidate[key]==portal[key] and candidate.a==portal.a then err=nil;return end
+    portal=candidate;portal_s=math.min(portal_s,portal_member==2 and portal.l or portal.h)
+    dirty_portal()
+end
 local function commit()
     if typing==nil then return end
     local v=tonumber(typing)
     -- Invalid text never changed the model; retain its last valid solution.
     if v==nil then export_message=nil;err='invalid number'
+    elseif page==1 and params.support==6 then apply_portal(portal_fields[edit_index][1],v)
     elseif page==1 and params.support==5 then
         local key=continuous_rows()[edit_index].key
         if type(key)=='number' or key=='g' or key=='q' or key=='gG_sup' or key=='gG_inf' or key=='gQ' then
@@ -775,7 +1054,9 @@ local function commit()
     typing=nil
 end
 local function step_selection(d)
-    if page==1 and params.support==5 then
+    if page==1 and params.support==6 then
+        if edit_index==1 then apply_portal('base',portal.base=='PIN' and 'FIX' or 'PIN') end
+    elseif page==1 and params.support==5 then
         local key=continuous_rows()[edit_index].key
         if key=='n' then
             local n=math.max(2,math.min(ContinuousPreset.MAX_SPANS,#continuous.spans+d))
@@ -814,7 +1095,15 @@ end
 function on.tabKey()
     dismiss_restore_notice()
     if page==0 then return end
+    local was_editing=typing~=nil
     commit()
+    if params.support==6 then
+        if not was_editing or not err then
+            if page==1 then err=nil;show_results() else page=1 end
+        elseif page==2 then page=1 end
+        if calculating and page~=2 then timer.stop();calculating=false end
+        redraw();return
+    end
     if result or params.support==5 then
         if page==1 then show_results()
         elseif page==2 then page=3
@@ -827,12 +1116,14 @@ function on.enterKey()
     dismiss_restore_notice()
     if page==0 then open_selected_system();redraw();return end
     if page==1 then
-        if params.support==5 then
+        if params.support==6 then commit()
+        elseif params.support==5 then
             if typing~=nil then commit() else step_selection(1) end
         elseif edit_index==1 then step_selection(1) else commit() end
     elseif page==2 then
         if not calculating then
-            if mode==4 then export_cas() else mode=4 end
+            local tablemode=params.support==6 and 5 or 4
+            if mode==tablemode then export_cas() else mode=tablemode end
         end
     elseif page==3 then
         local row=active_section_index()[sec_index]
@@ -844,8 +1135,16 @@ end
 function on.charIn(ch)
     dismiss_restore_notice()
     if page==0 then return end
+    if params.support==6 and page==2 then
+        local member=tonumber(ch)
+        if not calculating and mode~=5 and member and member%1==0 and member>=1 and member<=3 and member~=portal_member then
+            portal_member=member;cache_cursor();redraw()
+        end
+        return
+    end
     local can=false
-    if page==1 and params.support==5 then
+    if page==1 and params.support==6 then can=edit_index~=1
+    elseif page==1 and params.support==5 then
         local key=continuous_rows()[edit_index].key
         can=key~='n' and key~='left' and key~='right'
     elseif page==1 then can=edit_index~=1 and (names[edit_index]~='EI' or section.material==1)
@@ -879,7 +1178,7 @@ function on.escapeKey()
 end
 local function move_field(d)
     if page==1 then
-        local count=params.support==5 and #continuous_rows() or #names
+        local count=params.support==6 and 10 or (params.support==5 and #continuous_rows() or #names)
         edit_index=math.max(1,math.min(count,edit_index+d))
     elseif page==3 then
         local rows=section_rows()
@@ -902,12 +1201,33 @@ local function move_continuous_cursor(d)
     end
     if x~=old then cursor=x/total;cache_cursor() end
 end
+local function move_portal_cursor(direction)
+    if calculating or not samples then return end
+    if mode==5 then
+        table_page=math.max(1,math.min(#samples.table,table_page-direction));return
+    end
+    local data=samples.members[portal_member]
+    local index=direction>0 and #data or 1
+    if direction>0 then
+        for i,v in ipairs(data) do
+            if v.s>portal_s or (v.s==portal_s and v.side=='right' and portal_side=='left') then index=i;break end
+        end
+    else
+        for i=#data,1,-1 do
+            local v=data[i]
+            if v.s<portal_s or (v.s==portal_s and v.side=='left' and portal_side=='right') then index=i;break end
+        end
+    end
+    local v=data[index]
+    if v.s~=portal_s or v.side~=portal_side then portal_s=v.s;portal_side=v.side;cache_cursor() end
+end
 function on.arrowUp()
     dismiss_restore_notice()
     if page==0 then
         if sel_index>3 then sel_index=sel_index-3 end
         redraw();return
     end
+    if page==2 and params.support==6 then move_portal_cursor(1);redraw();return end
     if page==2 and params.support==5 then
         if not calculating then
             if mode==4 then table_page=1 else move_continuous_cursor(1) end
@@ -926,9 +1246,10 @@ end
 function on.arrowDown()
     dismiss_restore_notice()
     if page==0 then
-        if sel_index<=3 then sel_index=math.min(5,sel_index+3) end
+        if sel_index<=3 then sel_index=sel_index+3 end
         redraw();return
     end
+    if page==2 and params.support==6 then move_portal_cursor(-1);redraw();return end
     if page==2 and params.support==5 then
         if not calculating then
             if mode==4 then table_page=2 else move_continuous_cursor(-1) end
@@ -950,34 +1271,42 @@ function on.arrowLeft()
         if (sel_index-1)%3>0 then sel_index=sel_index-1 end
         redraw();return
     end
-    if page==2 then mode=(mode+2)%4+1
+    if page==2 and params.support==6 then mode=(mode+3)%5+1
+    elseif page==2 then mode=(mode+2)%4+1
     else commit();step_selection(-1) end
     redraw()
 end
 function on.arrowRight()
     dismiss_restore_notice()
     if page==0 then
-        if (sel_index-1)%3<2 and sel_index<5 then sel_index=sel_index+1 end
+        if (sel_index-1)%3<2 then sel_index=sel_index+1 end
         redraw();return
     end
-    if page==2 then mode=mode%4+1
+    if page==2 and params.support==6 then mode=mode%5+1
+    elseif page==2 then mode=mode%4+1
     else commit();step_selection(1) end
     redraw()
 end
 -- Saved inside the .tns document when the user saves it (TI Lua API on.save/restore).
 function on.save()
-    return {format='0.5.0',params=copy(params),section=copy(section),
+    return {format='0.6.0',params=copy(params),section=copy(section),portal=copy(portal),
         continuous=copy(continuous),page=page,mode=mode,cursor=cursor,
+        portal_member=portal_member,portal_s=portal_s,portal_side=portal_side,
         settings=copy(settings)}
 end
 local function valid_document(data)
-    if type(data)~='table' or data.format~='0.5.0' then return false end
+    if type(data)~='table' or data.format~='0.6.0' then return false end
     local p,s,c,t=data.params,data.section,data.continuous,data.settings
     if type(p)~='table' or type(s)~='table' or type(c)~='table' or type(t)~='table' then return false end
     local function integer(v,lo,hi) return finite(v) and v%1==0 and v>=lo and v<=hi end
-    if not integer(data.page,0,3) or not integer(data.mode,1,4)
+    if not PortalPreset.model(data.portal) or not integer(data.portal_member,1,3)
+       or not finite(data.portal_s) or data.portal_s<0
+       or data.portal_s>(data.portal_member==2 and data.portal.l or data.portal.h)
+       or (data.portal_side~='left' and data.portal_side~='right') then return false end
+    if not integer(data.page,0,3) or not integer(data.mode,1,p.support==6 and 5 or 4)
        or not finite(data.cursor) or data.cursor<0 or data.cursor>1 then return false end
-    if not integer(p.support,1,5) or not finite(p.L) or p.L<=0
+    if p.support==6 and data.page==3 then return false end
+    if not integer(p.support,1,6) or not finite(p.L) or p.L<=0
        or not finite(p.EI) or p.EI<=0 or not finite(p.q) or not finite(p.P)
        or not finite(p.a) or p.a<0 or p.a>p.L then return false end
     if not integer(s.material,1,#SectionDB.materials)
@@ -1002,12 +1331,14 @@ function on.restore(data)
     if calculating then timer.stop() end
     local valid=valid_document(data)
     params=copy(default_params);section=copy(default_section);continuous=copy(default_continuous)
+    portal=copy(default_portal);portal_member=2;portal_s=3;portal_side='left';portal_confirmed=nil
     settings={self_weight=false,limit=250}
     page=0;mode=1;cursor=.5;table_page=1;edit_index=1;sec_index=1;edit_top=1;sec_top=1
     typing=nil;selector_error=nil;selection_before=nil;restore_notice=nil
     dirty()
     if valid then
         params=copy(data.params);section=copy(data.section);continuous=copy(data.continuous)
+        portal=copy(data.portal);portal_member=data.portal_member;portal_s=data.portal_s;portal_side=data.portal_side
         settings=copy(data.settings)
     else
         restore_notice='Invalid document or version: defaults restored'
@@ -1016,7 +1347,7 @@ function on.restore(data)
     if valid then
         page=data.page;mode=data.mode;cursor=data.cursor
         -- Results reopen at input; no continuous solve until the user enters results.
-        if params.support==5 and page==2 then page=1 end
+        if (params.support==5 or params.support==6) and page==2 then page=1 end
     end
     sel_index=params.support
     redraw()

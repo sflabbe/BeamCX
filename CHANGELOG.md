@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — P6B-R1 rectangular portal
+- Added the sixth PORTAL selector card and productive UI → PortalPreset.solve → Frame.solve route. All four numerical modules remain frozen from P6A CLOSED/PASS.
+- Added scrolling manual h/l, equal PIN/FIX bases, EIc/EIb and characteristic q/P/a/H/w input, deferred timer calculation and transactional recovery after failed edits/calculations. No portal catalogue or self-weight.
+- Added cached M/V/N and absolute deformed-shape views, 1/2/3 member selection and one local recovery query per cursor change. Moment ordinates follow each member's actual tension side; point-load shear limits stay distinct.
+- Added scrolling reactions/member/corner/deformation results using the P6A chord-relative beam deflection, OPEN project/NA limits, and fourteen explicit unrounded bp_* CAS exports. Existing bx_*/bc_* contracts are unchanged.
+- Persistence now accepts only complete exact format 0.6.0. All older versions, including both retained v0.5 documents, are rejected atomically with defaults and the existing warning; no migration. Deferred results restore at input.
+- PC regression: 16 suites in Lua 5.1.5 and 5.4.7; 394 Frame rows, 2042 historical cases, 300 continuous models, 136 P6A portal models and six oracles retained. Ten-screen real-drawing contact sheet and owner acceptance checklist: VALIDATION_P6B.md.
+- Status: **PC IMPLEMENTATION/PASS — HARDWARE PENDING** on the original TI-Nspire CX CAS. No hardware rendering or timing is inferred from PC simulation.
+
 ## 0.5.0 — UI polish R2
 - Standardized all application UI text to English, including CONTINUOUS, forms, envelopes, tables, instructions, restore notices and feedback. Updated the benchmark's continuous-case label.
 - Display results with two decimal places; normalize negative zero. Tiny nonzero magnitudes below 0.005 and large magnitudes from 10⁷ use scientific notation with a two-decimal mantissa. Keyboard editing, saves, calculations and both CAS exports retain full precision.

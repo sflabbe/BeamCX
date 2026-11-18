@@ -12,7 +12,8 @@ function _BX_TEST_STATE()
         typing=typing,restore_notice=restore_notice,format_number=fmt,
         continuous=copy(continuous),samples=samples,cursor_value=cursor_value,
         stale=stale,calculating=calculating,table_page=table_page,edit_index=edit_index,
-        edit_top=edit_top,characteristic=characteristic}
+        edit_top=edit_top,characteristic=characteristic,
+        portal=copy(portal),portal_member=portal_member,portal_s=portal_s,portal_side=portal_side}
 end
 ]=]
     return assert((loadstring or load)(source..'\n'..snapshot,'@'..path))()

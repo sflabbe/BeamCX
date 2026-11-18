@@ -6,6 +6,7 @@ for name, marker, localname in [
     ('frame_core.lua','return Frame\n','Frame'),
     ('beam_preset.lua','return BeamPreset\n','BeamPreset'),
     ('continuous_preset.lua','return ContinuousPreset\n','ContinuousPreset'),
+    ('portal_preset.lua','return PortalPreset\n','PortalPreset'),
     ('beam_ui.lua',None,None)]:
     src=(root/'src'/name).read_text(encoding='utf-8')
     if marker:
@@ -15,8 +16,10 @@ for name, marker, localname in [
     # their initial declaration from local to module-global (no require).
     if localname:
         src=src.replace('local '+localname+' =',localname+' =',1)
+        if localname=='PortalPreset':
+            src=src.replace('local PortalPreset=', 'PortalPreset=',1)
     parts.append(src)
-out='-- BeamCX v0.5.0 (generated).\n'+'\n'.join(parts)
+out='-- BeamCX v0.6.0 (generated).\n'+'\n'.join(parts)
 (root/'BeamCX.lua').write_text(out, encoding='utf-8')
 print(f'Wrote BeamCX.lua: {len(out.encode()):,} bytes')
 print('Package with: python3 tools/package.py')

@@ -50,7 +50,12 @@ local function export()
 end
 fresh()
 local defaults=on.save()
-local docs=dofile(root..'/tests/fixtures/beam_v050_saved.lua')
+local legacy=dofile(root..'/tests/fixtures/beam_v050_saved.lua')
+for _,doc in ipairs(legacy) do
+    on.restore(doc);same(on.save(),defaults)
+    assert(state().restore_notice=='Invalid document or version: defaults restored')
+end
+local docs=dofile(root..'/tests/current_documents.lua')(defaults)
 for _,doc in ipairs(docs) do
     on.restore(doc);assert(state().restore_notice==nil)
     same(on.save(),doc)
@@ -90,7 +95,7 @@ for _,case in ipairs{{27.58,'27.58'},{8.43,'8.43'},{15,'15.00'},
     {.0049,'4.90e-03'},{-.0049,'-4.90e-03'},{1e12,'1.00e+12'}} do
     assert(fmt(case[1])==case[2],fmt(case[1])..' != '..case[2])
 end
-local old_docs=dofile(root..'/tests/fixtures/beam_v050_saved.lua')
+local old_docs=dofile(root..'/tests/current_documents.lua')(on.save())
 for _,doc in ipairs(old_docs) do
     doc.page=1;doc.mode=1
     on.restore(doc);same(on.save(),doc)

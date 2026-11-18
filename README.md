@@ -1,22 +1,22 @@
 # BeamCX
 
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
-TI-Lua 5.1 app for single-span and continuous prismatic beams, with support presets, load envelopes, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
+TI-Lua 5.1 app for single-span beams, continuous prismatic beams and rectangular portals, with support presets, load envelopes, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.5.0 — Continuous beams**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.6.0 — Rectangular portal**. **PC IMPLEMENTATION/PASS — HARDWARE PENDING.** A small teaching / engineering-check tool, **not** a design-code verifier.
 
-The application uses one numerical engine: `BeamPreset → Frame.solve` for the four single-span systems and `ContinuousPreset → Frame.solve / Frame.combine` for **CONTINUOUS**. Single-span calculation remains immediate. Continuous beams use deferred calculation and cached plots. Only complete, valid **0.5.0** saved documents are accepted; other versions or any invalid field reset the whole document to defaults with a selector notice. There is no migration of v0.4 documents.
+The application uses one numerical engine: `BeamPreset → Frame.solve` for the four single-span systems and `ContinuousPreset → Frame.solve / Frame.combine` for **CONTINUOUS**. PORTAL uses `PortalPreset.solve → Frame.solve`, exactly once per stale model. Single-span calculation remains immediate; continuous beams and portals use deferred calculation and cached plots. Only complete, valid **0.6.0** saved documents are accepted. A v0.5.0 or older document, or any malformed current document, resets ALL state to defaults at the selector with `Invalid document or version: defaults restored`. There is no compatibility parser or migration.
 
 ## Features
 
 - Four single-span presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned; plus **CONTINUOUS** with **2–5 spans**, PIN/FIX ends and one shared EI.
-- Visual 3×2 system selector with five cards and an empty sixth position; navigation skips the empty position. Each card has compact supports and a reference bending-moment silhouette for a downward uniform load (`q>0`). These silhouettes illustrate the support cases; they are not results from the current model.
+- Visual 3×2 system selector with six cards, including **PORTAL** (one rectangular bay, equal PIN/FIX bases). All cells are accessible with arrows. Each card has compact supports and a reference bending-moment silhouette for a downward uniform load (`q>0`). These silhouettes illustrate the support cases; they are not results from the current model.
 - Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards, negative loads upwards. Distributed-load arrows follow the calculated total load, including enabled self-weight.
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
 - Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
 - Optional automatic self-weight from steel catalogue mass or concrete rectangle dimensions; **OFF by default**.
-- Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem: `bx_*` for single-span beams, `bc_*` for continuous beams.
-- **Plot convention:** sagging moment `M > 0` is drawn *below* the reference line, hogging `M < 0` *above* it.
+- Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem: `bx_*` for single-span beams, `bc_*` for continuous beams; PORTAL explicitly exports fourteen `bp_*` values.
+- **Single-span plot convention:** sagging moment `M > 0` is drawn *below* the reference line, hogging `M < 0` *above* it.
 - Offline `EI` input or automatic `EI = E × I` via:
   - Concrete **C20/25, C25/30, C30/37** and editable gross rectangular section `b × h` in mm.
   - Steel **S235, S355**, IPE 100–300 and HEA 100–300, using nominal strong-axis `Iy` values.
@@ -74,13 +74,13 @@ Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.7
 
 **v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
 
-**v0.4.0 is validated on the CX CAS by the owner.** The v0.5.0 continuous-beam UI requires owner testing: case E, five-span calculation time, cursor responsiveness, `bc_*` export and persistence. See [P5B validation](VALIDATION_P5B.md). See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
+**v0.5.0 is validated on the original CX CAS by the owner (P6B baseline).** v0.6.0 is PC-qualified; portal hardware acceptance remains pending. See [P6B validation and owner checklist](VALIDATION_P6B.md), the [simulated contact sheet](PORTAL_UI_CONTACT.png), and historical [P5B validation](VALIDATION_P5B.md). See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
 
 ## Keys
 
 The table below describes the single-span pages; CONTINUOUS controls follow it.
 
-New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press `ENTER` to confirm the system and open beam input. A failed calculation keeps the previous confirmed model and leaves the selector open with an error. `ESC` returns to the selector; while entering a number, the first `ESC` only cancels that edit. Valid current documents reopen on their saved page, except continuous results reopen at input and wait for the user to enter results. Input/section focus is reset and is not part of the saved document. Invalid documents open at the default selector with “Invalid document or version: defaults restored” until the first key action.
+New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press `ENTER` to confirm the system and open beam input. A failed calculation keeps the previous confirmed model and leaves the selector open with an error. `ESC` returns to the selector; while entering a number, the first `ESC` only cancels that edit. Valid current documents reopen on their saved page, except continuous and portal results reopen at input and wait for the user to enter results. Input/section focus is reset and is not part of the saved document. Invalid documents open at the default selector with “Invalid document or version: defaults restored” until the first key action.
 
 | Key | System selector | Beam input | Diagrams / results | Material / section |
 | --- | --- | --- | --- | --- |
@@ -96,7 +96,7 @@ In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in
 
 Select **CONTINUOUS** and press `ENTER`. Use `↑` / `↓` to scroll the input list. `←` / `→` changes the number of spans (2–5, default 3) and PIN/FIX end supports. Type a number and press `ENTER` for each span length, g, q and the three factors. Lengths must be positive; added spans copy the last retained length. Defaults are 6 m per span, PIN–PIN, g=10 and q=5 kN/m, γG,sup=1.35, γG,inf=1.00 and γQ=1.50.
 
-Edits mark the result **Desactualizado** and discard the plot cache. `TAB` enters results, displays **Calculating…**, and schedules calculation in a short timer; painting never solves. On completion, approximately 20 points per span and both sides of each internal support are stored once. Repainting and switching result modes use this cache. `↑` / `↓` moves the cursor over the total length, including each support, with one exact envelope query per movement. Shear readings at internal supports show both sides.
+Edits mark the result **Outdated** and discard the plot cache. `TAB` enters results, displays **Calculating…**, and schedules calculation in a short timer; painting never solves. On completion, approximately 20 points per span and both sides of each internal support are stored once. Repainting and switching result modes use this cache. `↑` / `↓` moves the cursor over the total length, including each support, with one exact envelope query per movement. Shear readings at internal supports show both sides.
 
 Use `←` / `→` to cycle **M envelope**, **V envelope**, **characteristic w** and **compact table**. Positive M is below the axis. V includes support jumps. The w plot shows the two characteristic odd/even load patterns, positive downward, in mm. This deflection rule is verified against exhaustive test cases; it is not a theorem for all beam configurations. In the table, `↑` / `↓` selects spans or supports. Span rows show L, positive M maximum (or —), governing w with ↓/↑, L/|w| and status; support rows show Mmin, positive Mmax when present, Rmax and Rmin. Global |V|max and the actual factors appear below both tables.
 
@@ -123,7 +123,92 @@ Case E (3×6 m, PIN–PIN, g=10, q=5, EI=10000, default factors, self-weight OFF
 
 The interface is English throughout. Numerical results use two decimal places, for example `15.00 kN`, `3.96 mm`, `5.10 m` and `1.35` for a load factor. Exact zero, including negative zero, displays as `0.00`. Nonzero magnitudes below 0.005 use scientific notation with a two-decimal mantissa, such as `-1.23e-08`, to retain their sign and magnitude. Values of magnitude 10⁷ or greater also use scientific notation to fit the small display.
 
-This formatting only changes the text shown on screen. Keyboard text stays unrounded while editing; solver input, extrema, comparisons, saved numbers and `bx_*`/`bc_*` exports retain full precision. Existing valid v0.5.0 documents remain readable with the same serialized keys. Long selector diagnostics wrap instead of being truncated. See the [R2 validation and naming report](VALIDATION_P5B_UI_POLISH_R2.md).
+This formatting only changes the text shown on screen. Keyboard text stays unrounded while editing; solver input, extrema, comparisons, saved numbers and `bx_*`/`bc_*`/`bp_*` exports retain full precision. Only complete v0.6.0 documents are accepted; v0.5.0 documents are rejection witnesses, never migrated. Long selector diagnostics wrap instead of being truncated. See the [R2 validation and naming report](VALIDATION_P5B_UI_POLISH_R2.md).
+
+### PORTAL
+
+Choose the sixth card and press ENTER. Geometry is one rectangular bay with
+height h and beam width l. Both bases are PIN or both FIX. Nodes 1/4 are the
+left/right bases, nodes 2/3 the left/right eaves; members are 1→2 (left column),
+2→3 (beam), and 4→3 (right column). **Both columns run bottom to top.**
+
+UP/DOWN selects a field in the scrolling input list. LEFT/RIGHT toggles Base.
+Type numbers and press ENTER to confirm; editing retains full precision.
+Defaults: FIX, h=4 m, l=6 m, EIc=10000 and EIb=15000 kN·m², q=10 kN/m,
+P=0 kN at a=3 m, H=0 kN and w=0 kN/m. EIc/EIb are manual numbers; portals
+have no section page, catalogue selection or automatic self-weight.
+
+q and P are positive downward on the beam. H acts at the left eave, positive
+rightward. w is uniform on the left column, positive rightward. Negative
+values reverse arrows; zero loads draw none. Loads are characteristic and
+simultaneous, with no factors or combinations. Validation delegates to
+PortalPreset.model; invalid edits preserve valid parameters and results.
+When P=0, reducing l below inactive a resets a=l/2; active invalid a is rejected.
+
+Valid changes mark results stale. TAB queues the normal TI timer and displays
+`Calculating...`; one PortalPreset.solve and one Frame.solve then populate the
+result and plot cache. TAB returns to input. Repaints, mode changes, table
+scrolling and CAS export do not solve. A failed calculation restores the prior
+confirmed model; there is no partial result publication.
+
+LEFT/RIGHT cycles **M, V, N, Deformed, Results**. Keys **1/2/3** select the
+left column/beam/right column; UP/DOWN moves along its local coordinate s.
+Columns start at the base; the beam starts at the left eave. Cursor readings
+use one PortalPreset.at query per change. At beam P the cursor visits left
+and right shear limits separately, with an explicit side label. ENTER opens
+the table; ENTER in the table exports CAS. UP/DOWN scrolls table rows.
+ESC cancels an edit or returns to the system selector.
+
+N is positive in tension. V keeps Frame's local-member convention
+(dM/ds=V, dV/ds=q_local). **M positive tensions local −y**: rightward for
+both columns and downward for the beam. Moments are drawn on that tension
+side with a common scale, without flipping the right column. V/N ordinates
+use local +y; N tension is orange and compression cyan. Graphics use roughly
+20 intervals per member plus endpoints and the exact P cut; V draws the jump
+at a, including both sides. Reported M extrema come from PortalPreset, and
+maximum |V| uses exact recovery endpoints and both P limits, not screen pixels.
+
+The deformed view transforms recovered local axial/transverse displacements
+to global coordinates and shows the original geometry faintly. The displayed
+magnification factor is for visibility. This **absolute displaced shape** is
+separate from the reported **beam deflection relative to the displaced end
+chord**, taken unchanged from sol.deflection. Drift is global horizontal
+motion at each eave. The table shows drift and signed w_rel in mm, h/|drift|,
+l/|w_rel| and its local position; zero ratios display a dash. Deformation
+limits remain **OPEN (project / NA)**. There is no serviceability certification.
+
+EA=1e6·EI/L² is a finite approximation to negligible axial deformation, not a
+physical EA input or universal precision guarantee. This is a linear elastic
+first-order model, without P-Delta or stability analysis. Gable frames, multiple
+bays/stories, inclined loads, joint releases, portal envelopes and code design
+checks are outside v0.6. See the [P6A precision qualification](VALIDATION_P6A.md).
+
+Portal CAS exports are unrounded numeric values, only on explicit ENTER in
+the results table. PIN moments export numeric zero. All fourteen values are
+validated before any store; partial failures show an error, never success.
+Only fourteen successful stores display `CAS: 14 variables stored`.
+
+| Variable | Meaning | Unit |
+| --- | --- | --- |
+| bp_hl | Left base horizontal reaction (+right) | kN |
+| bp_vl | Left base vertical reaction (+up) | kN |
+| bp_ml | Left base reaction moment (+CCW) | kNm |
+| bp_hr | Right base horizontal reaction | kN |
+| bp_vr | Right base vertical reaction | kN |
+| bp_mr | Right base reaction moment | kNm |
+| bp_mmax | Global algebraic member M maximum | kNm |
+| bp_mmin | Global algebraic member M minimum | kNm |
+| bp_nabs | Maximum absolute member N | kN |
+| bp_vabs | Maximum absolute member V, including both P sides | kN |
+| bp_dxl | Signed left eave horizontal drift | mm |
+| bp_dxr | Signed right eave horizontal drift | mm |
+| bp_wrel | Signed governing beam chord-relative deflection | mm |
+| bp_xwrel | Local position of governing beam deflection | m |
+
+Save/restore persists all three parameter sets, active system, page/mode,
+portal member and local cursor; matrices, solutions, samples and timers are
+not serialized. Complete valid portal results documents reopen at input and
+wait for normal deferred results entry. **Only exact format 0.6.0 is accepted.**
 
 ### Deflection comparison and self-weight
 
@@ -182,6 +267,7 @@ BeamCX/
 │   ├── frame_core.lua      # Single productive numerical engine and recovery
 │   ├── beam_preset.lua     # Four presets; downward input sign boundary; CAS summary
 │   ├── continuous_preset.lua # Productive continuous bases, envelopes and summary
+│   ├── portal_preset.lua   # Frozen P6A rectangular portal, one Frame.solve
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/
@@ -223,7 +309,7 @@ BeamCX/
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **14 suites pass under Lua 5.1.5 and Lua 5.4.7** (the existing 13 plus the English presentation/precision suite). The P5A test-only reference requires SymPy; the numerical application has no Python dependency. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Single-span limit changes and all repaint operations do not solve again. Continuous edits, including the comparison limit, defer calculation until results entry. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **16 suites pass under Lua 5.1.5 and Lua 5.4.7**, including the 136-model P6A campaign and productive portal UI suite. The P5A test-only reference requires SymPy; the numerical application has no Python dependency. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Single-span limit changes and all repaint operations do not solve again. Continuous edits, including the comparison limit, defer calculation until results entry. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
 
 ## Benchmark (P2A / P5A)
 
@@ -262,7 +348,7 @@ python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc check
 
 The retained P2A comparison rules distinguish **2,009 ordinary equivalent cases, two independently adjudicated cases, five RESOLVED legacy failures and 26 invalid inputs**. P2B consumes these fixtures without regenerating them or changing the numerical authority. Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
 
-The calculation-only rectangular portal preset (P6A, pending P6B integration) uses
+The frozen rectangular portal preset (P6A, now productive through PORTAL) uses
 `EA = 1e6 * EI / L²` to approximate negligible axial deformation. Finite-EA
 approximation error and floating-point roundoff are distinct; neither has a
 universal bound for every geometry. The independent random-model tests use

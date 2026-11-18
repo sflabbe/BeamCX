@@ -3,7 +3,9 @@
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
 TI-Lua 5.1 app for one prismatic beam span, with support presets, load diagrams, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.3.3 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.4.0 — Productive FEA**. A small teaching / engineering-check tool, **not** a design-code verifier.
+
+The application now uses one numerical engine: `BeamPreset → Frame.solve`, followed by Frame recovery and analytical extrema. The four existing single-span presets remain the selectable systems. Continuous beams and frames are capabilities of the underlying engine only; they are not selectable application features. The legacy solver has been removed. Existing v0.3.3 saved documents retain their input, section, system, page and settings contract.
 
 ## Features
 
@@ -26,7 +28,7 @@ Version: **0.3.3 — Quick Beam Check**. A small teaching / engineering-check to
 Requires **Python 3**, **Luna** and the TI-Nspire file-transfer tool of your choice. `liblua5.4-0` is needed only for the local Python-based test harness.
 
 ```bash
-sudo apt install build-essential zlib1g-dev python3 liblua5.4-0
+sudo apt install build-essential zlib1g-dev python3 liblua5.4-0 lua5.1
 
 # Once only, if Luna is not already installed:
 git clone https://github.com/ndless-nspire/Luna.git ~/Luna
@@ -35,18 +37,20 @@ make -C ~/Luna
 
 # From the root of this BeamCX repository:
 python3 build.py
-for test in tests/test_*.py; do python3 "$test"; done
+luac5.1 -p BeamCX.lua
+python3 tests/run_suites.py
+python3 tests/run_suites.py --lua lua5.1
 ~/Luna/luna BeamCX.lua BeamCX.tns
 ```
 
-If Lua 5.1 is installed, also check the target syntax and run the new analytical/UI regressions:
+The analytical/UI Lua check can also run directly:
 
 ```bash
 luac5.1 -p BeamCX.lua
 lua5.1 tests/quick_check.lua "$PWD"
 ```
 
-Releases are packaged with official **Luna commit `a9924a9`**. Luna compresses with the system zlib, so `.tns` sizes differ between machines (classic zlib vs. zlib-ng: e.g. 11,938 vs. 12,006 bytes for the same v0.3.2 script); both are valid, and size is not a cross-machine build check. One upload of v0.3.2 stalled N-Link at 91 %. That attempt used the file name `BeamCX_0.3.tns` (extra dot), the `Apps` folder and the classic-zlib build; the transfer that worked used a plain name, the root folder and the zlib-ng build. The cause was not isolated. The classic-zlib v0.3.3 build later transferred fine under a plain name in the root folder. Recommended practice: plain file names without extra dots (e.g. `BeamCX033.tns`) and the root folder.
+Releases are packaged with official **Luna commit `a9924a9`**. Luna compresses with the system zlib, so `.tns` sizes differ between machines (classic zlib vs. zlib-ng: e.g. 11,938 vs. 12,006 bytes for the same v0.3.2 script); both are valid, and size is not a cross-machine build check. One upload of v0.3.2 stalled N-Link at 91 %. That attempt used the file name `BeamCX_0.3.tns` (extra dot), the `Apps` folder and the classic-zlib build; the transfer that worked used a plain name, the root folder and the zlib-ng build. The cause was not isolated. The classic-zlib v0.3.3 build later transferred fine under a plain name in the root folder. Recommended practice: plain file names without extra dots (e.g. `BeamCX.tns`) and the root folder.
 
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
@@ -55,6 +59,8 @@ Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.7
 **v0.3.2 was also validated on hardware on 2026-11-18:** selector and silhouettes; returning with Esc; Esc during editing; inert Tab in the selector; retained result after `invalid number` and recovery of EXPORT CAS; saving in the selector. FIX-PIN with `q = 10 kN/m`, `L = 6 m`, `EI = 10,000 kN·m²` gave `RA = 37.5 kN`, `RB = 22.5 kN`, `M(3 m) = 22.5 kNm`, `Mmin = −45 kNm`, `Mmax = 25.313 kNm`, matching the analytical values.
 
 **v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
+
+**v0.4.0 hardware acceptance is pending.** Transfer the new `BeamCX.tns` and verify all four systems, M/V/w diagrams and cursor, section changes, and all eight CAS exports on the original CX CAS. A successful desktop test/build/package does not establish physical validation. See [P2B validation report](VALIDATION_P2B.md).
 
 ## Keys
 
@@ -72,7 +78,7 @@ In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in
 
 ### Deflection comparison and self-weight
 
-The compact results view shows `|w|max` in **mm**, its position in **m**, `L/|w|` using consistent length units, and utilization `|w|max / (L / limit)` for both limits. Maxima include all segment boundaries and stationary points of the existing analytical deflection function; they do not depend on plot samples or cursor position. If equal absolute maxima exist, one maximizing position is reported. The selected comparison reports **OK**, **EXCEEDED**, or **N/A** for an undefined ratio (zero deflection). The default limit is L/250. These are user-selected comparison limits, not universal code-compliance certificates.
+The compact results view shows `|w|max` in **mm**, its position in **m**, `L/|w|` using consistent length units, and utilization `|w|max / (L / limit)` for both limits. Maxima include all segment boundaries and stationary points of Frame's analytical deflection recovery; they do not depend on plot samples or cursor position. If equal absolute maxima exist, one maximizing position is reported. The selected comparison reports **OK**, **EXCEEDED**, or **N/A** for an undefined ratio (zero deflection). The default limit is L/250. These are user-selected comparison limits, not universal code-compliance certificates.
 
 For **concrete cantilevers**, the comparisons use **`Lref = 2.5 × L`**, following DIN EN 1992-1-1/NA, NCI to **7.4.1(4)** ([official publication, PDF page 144](https://www.niedersachsen.de/download/140002/Nds._MBl._Nr._3_2019_vom_24.01.2019_Anlagenband_1-Teil_1.pdf#page=144)). The screen shows `Lref/|w|` and `Lref=2.5L (EC2/NA)`; utilization is `|w|max / (Lref / limit)`. **This changes the ratio and L/250 / L/300 utilization only for concrete cantilevers**, relative to v0.3.2. It does not change maximum deflection, reactions, moments or exported `bx_` values. The three other support presets continue to use `Lref = L` for every material.
 
@@ -111,11 +117,11 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 
 ## Scope and limitations
 
-- **One span only.** Not a general 2D frame, continuous-beam, seismic or dynamic solver. No multiple load points, partial/trapezoidal UDL, thermal or prescribed displacements.
+- **The UI offers one span only**, through the four existing presets. General frames and continuous beams are not selectable; seismic and dynamic analysis are outside the application scope. No multiple load points, partial/trapezoidal UDL, thermal or prescribed displacements.
 - Linear, small-deflection, prismatic Euler–Bernoulli analysis; self-weight is included only when explicitly switched ON. No load combinations or resistance checks.
 - **Concrete:** `Ecm` with **gross uncracked** rectangular inertia only. Displayed deflections are **not** cracked/creep-adjusted reinforced-concrete service deflections. No reinforcement or EC2 design verification.
 - Steel profile values are nominal and not geometric/material strength checks; neither steel nor concrete code verification is performed.
-- Point loads extremely close to a support can trigger the existing ill-conditioning guard; a point at an exact end is supported.
+- The five independently resolved legacy failures now solve through Frame, including loads near supports. Existing numerical guards and the 60-node engine limit remain unchanged.
 - If `P != 0`, changing `L` below the existing position `a` is rejected until `a` is adjusted.
 - No warranty of fitness for structural design: independently verify results for engineering use.
 
@@ -124,27 +130,29 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 ```text
 BeamCX/
 ├── src/
-│   ├── beam_core.lua       # Solver and result recovery
-│   ├── beam_preset.lua     # Permanent Frame presets (not yet used by the app)
-│   ├── frame_core.lua (v0.4-P1C, not yet used by the app)
+│   ├── frame_core.lua      # Single productive numerical engine and recovery
+│   ├── beam_preset.lua     # Four presets; downward input sign boundary; CAS summary
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/
-│   ├── test_port.py        # Beam calculations + UI smoke test
+│   ├── test_port.py        # Independent structural witnesses + UI smoke test
 │   ├── test_catalog.py     # EI, materials, inputs and persistence
 │   ├── test_plot_sign.py   # M/V/w plotting conventions
 │   ├── test_arrows.py      # One filled arrowhead per load
 │   ├── test_quick_check.py # Quick Beam Check harness
 │   ├── test_selector.py    # Visual selector, reference moments, Esc, restore
 │   ├── test_v033.py        # Signed loads, text bounds, Lref, CAS regression
-│   ├── test_beam_preset.py # Physical equivalence against the golden fixture
+│   ├── test_beam_preset.py # Generated bundle vs frozen golden/adjudication
+│   ├── test_productive_route.py # UI → Frame instrumentation, cursors, RESOLVED
+│   ├── test_frame_core.py  # 394 original Frame oracles and retained regressions
+│   ├── run_suites.py       # Complete suite under liblua5.4 or a Lua CLI
 │   ├── test_dc_reference.py # Frame vs frozen dc Euler reference
 │   ├── fixtures/beam_v033_golden.json # Frozen v0.3.3 inputs and outputs
 │   ├── fixtures/beam_v033_adjudicated.json # Independent 60-digit references
 │   ├── fixtures/dc_reference.json # Frozen dc Euler reactions/displacements
 │   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
 ├── tools/
-│   ├── make_beam_golden.py # Run: python3 tools/make_beam_golden.py
+│   ├── make_beam_golden.py # Retained input provenance / Lua fixture serialization
 │   ├── adjudicate_beam_golden.py # Independent mpmath oracle (offline)
 │   ├── dc_reference.py    # dc fixture generator (offline)
 │   ├── bench_ti.lua      # Independent CX timing screen and PC measurement
@@ -153,11 +161,12 @@ BeamCX/
 ├── build.py                # Bundle to BeamCX.lua
 ├── bench.lua               # Generated independent benchmark
 ├── BXBENCH.tns             # Generated benchmark for the calculator
+├── VALIDATION_P2B.md       # Migration results and hardware acceptance status
 ├── CHANGELOG.md
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3.3, all seven suites' Lua scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **11 suites pass under Lua 5.1.5 and Lua 5.4.7**. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Limit changes and repaint do not solve again. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
 
 ## Benchmark (P2A)
 
@@ -170,19 +179,31 @@ python3 tools/build_bench.py
 lua5.1 -e "dofile('bench.lua').pc()"
 ```
 
-Transfer **BXBENCH.tns** under that plain name into the calculator's root folder and open it. It starts automatically and shows Frame's version/hash, nodes/GDL, solution time and time for 101 recovery calls. Each phase uses at least three repetitions and targets at least 200 ms accumulated measured time (maximum 4096 repetitions). Measurement yields between operations so the screen can update. Painting is excluded. The clock is TI's [`timer.getMilliSecCounter()`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/timerlib/getmilliseccounter.HTML), available since API 1.0; 32-bit rollover is handled. PC reference runs use `os.clock` CPU time. No calculator timing is claimed until measured on the device. This build does not change `BeamCX.lua`.
+Transfer **BXBENCH.tns** under that plain name into the calculator's root folder and open it. It starts automatically and shows Frame's version/hash, nodes/GDL, solution time and time for 101 recovery calls. Each phase uses at least three repetitions and targets at least 200 ms accumulated measured time (maximum 4096 repetitions). Measurement yields between operations so the screen can update. Painting is excluded. The clock is TI's [`timer.getMilliSecCounter()`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/timerlib/getmilliseccounter.HTML), available since API 1.0; 32-bit rollover is handled. PC reference runs use `os.clock` CPU time. The reference measurements below were obtained on the original TI-Nspire CX CAS. They measure the general solver and do not guarantee application UI timings. This build does not change `BeamCX.lua`.
+
+Existing BXBENCH solve-time references (P2A closed):
+
+| Model | Measured solve time |
+| --- | ---: |
+| Single-span beam | 76.67 ms |
+| Continuous beam, five spans | 470 ms |
+| Gable frame | 276.67 ms |
+| 20 nodes | 2726.67 ms |
+| 40 nodes | 8830 ms |
+| 60 nodes | 20670 ms |
+
+The 60-node numerical guard remains. No new performance threshold or confirmation screen is introduced.
 
 Offline oracle tools (normal tests need neither numpy, dc nor mpmath):
 
 ```bash
-# Reproduce the golden into a temporary file; preserve the versioned fixture:
-python3 tools/make_beam_golden.py --output /tmp/beam_v033_golden.json
-python3 tests/test_beam_preset.py --live-beam
+# Consume the frozen golden; legacy live regeneration was retired with its solver:
+python3 tests/test_beam_preset.py
 python3 tools/adjudicate_beam_golden.py  # mpmath, 60 digits
 python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc checkout
 ```
 
-Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
+The retained P2A comparison rules distinguish **2,009 ordinary equivalent cases, two independently adjudicated cases, five RESOLVED legacy failures and 26 invalid inputs**. P2B consumes these fixtures without regenerating them or changing the numerical authority. Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
 
 ## Data references
 
@@ -198,5 +219,5 @@ MIT — see [LICENSE](LICENSE).
 
 ## Development note
 
-The beam formulation was adapted for a restricted single-span TI-Lua application using Euler–Bernoulli frame-element stiffness terms; it is **not** a complete port of the original `dinamica-computacional` project. Existing numerical mechanics have not been changed as part of packaging this repository.
+The beam formulation was adapted for a restricted single-span TI-Lua application using Euler–Bernoulli frame-element stiffness terms; it is **not** a complete port of the original `dinamica-computacional` project. P2B activates the already validated Frame engine without changing its mechanics, tolerances or sign conventions. Load signs convert only at the existing BeamPreset boundary.
 # BeamCX

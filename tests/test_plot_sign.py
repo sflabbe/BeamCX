@@ -56,8 +56,8 @@ on.arrowRight() -- w
 local w=trace()
 assert(w[50].y0>mid,'negative downward deflection must still be below axis')
 local p=on.save().params
-local s=Beam.solve(p)
-assert(s and math.abs(Beam.at(s,3).M-15)<1e-9, 'numerical moment unchanged')
+local s=BeamPreset.solve(p)
+assert(s and math.abs(BeamPreset.at(s,3).M-15)<1e-9, 'numerical moment unchanged')
 print('PASS: actual TI-Lua plots M(+)/M(-), V and w; solver values unchanged')
 '''
 vm = lib.luaL_newstate()

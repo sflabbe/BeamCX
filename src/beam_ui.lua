@@ -1,4 +1,4 @@
--- BeamCX v0.3.3, UI (TI-Lua 5.1). Drawing and cantilever reference fixes.
+-- BeamCX v0.4.0, UI (TI-Lua 5.1). Single productive Frame engine.
 local SectionDB=DB -- the offline DB from the generated single-file script
 local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
@@ -42,8 +42,8 @@ local function recalc()
     local p={}
     for k,v in pairs(params) do p[k]=v end
     p.q=params.q+(settings.self_weight and q_sw or 0)
-    result,err=Beam.solve(p)
-    if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
+    result,err=BeamPreset.solve(p,settings.limit,lref_factor())
+    if result then summary=result.summary end
     if not result then page=1 end
     return result~=nil
 end
@@ -76,10 +76,10 @@ local function export_cas()
         export_message='CAS ERROR: API unavailable';return
     end
     local values={
-        {'bx_mmax',summary.mmax},{'bx_mmin',summary.mmin},
-        {'bx_vabs',summary.vabs},{'bx_wmax',summary.w_abs_max},
-        {'bx_xwmax',summary.x_wmax},{'bx_ra',summary.ra},
-        {'bx_rb',summary.rb},{'bx_ei',summary.ei}
+        {'bx_mmax',summary.bx_mmax},{'bx_mmin',summary.bx_mmin},
+        {'bx_vabs',summary.bx_vabs},{'bx_wmax',summary.bx_wmax},
+        {'bx_xwmax',summary.bx_xwmax},{'bx_ra',summary.bx_ra},
+        {'bx_rb',summary.bx_rb},{'bx_ei',summary.bx_ei}
     }
     for _,v in ipairs(values) do
         if type(v[2])~='number' or v[2]~=v[2] or math.abs(v[2])==math.huge then
@@ -102,7 +102,7 @@ local function label(gc,t,x,y) gc:drawString(t,x,y,'top') end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.3.3',6,4)
+    label(gc,'BeamCX | EB 2D | v0.4.0',6,4)
 end
 local function name_value(index)
     local key=names[index]
@@ -136,7 +136,7 @@ local function draw_edit(gc,w,h)
         color(gc,255,140,120);label(gc,err,7,h-46)
     elseif result then
         color(gc,128,222,181)
-        local lo,_,hi=Beam.moment_extrema(result)
+        local lo,hi=result.moments.minimum.value,result.moments.maximum.value
         label(gc,'Mmin='..fmt(lo)..'  Mmax='..fmt(hi)..' kNm',7,h-46)
     end
     color(gc,171,193,207);gc:setFont('sansserif','r',9)
@@ -194,19 +194,20 @@ end
 
 local function draw_results(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
-    local s=summary
+    local s=result.deflection_check
+    local cas=result.summary
     label(gc,'QUICK CHECK | deflection comparison',7,27)
-    label(gc,'|w|max='..fmt(s.w_abs_max)..' mm',7,46)
-    label(gc,'x='..fmt(s.x_wmax)..' m',193,46)
+    label(gc,'|w|max='..fmt(cas.bx_wmax)..' mm',7,46)
+    label(gc,'x='..fmt(cas.bx_xwmax)..' m',193,46)
     local ratio_label=s.lref_factor==2.5 and 'Lref/|w|=' or 'L/|w|='
-    label(gc,ratio_label..(s.ratio and fmt(s.ratio) or 'N/A'),7,64)
+    label(gc,ratio_label..(s.span_deflection_ratio and fmt(s.span_deflection_ratio) or 'N/A'),7,64)
     label(gc,'L/'..settings.limit..': '..s.status,163,64)
-    label(gc,'L/250: '..fmt(s.u250*100)..'%',7,82)
-    label(gc,'L/300: '..fmt(s.u300*100)..'%',163,82)
+    label(gc,'L/250: '..fmt(s.utilization.L250*100)..'%',7,82)
+    label(gc,'L/300: '..fmt(s.utilization.L300*100)..'%',163,82)
     label(gc,'SW '..(q_sw and (settings.self_weight and 'ON' or 'OFF') or 'N/A')..
         ' | q sw='..(q_sw and fmt(q_sw) or 'N/A')..' kN/m',7,100)
-    label(gc,'q total='..fmt(result.p.q)..' kN/m',7,118)
-    if result.p.support==2 then
+    label(gc,'q total='..fmt(result.parameters.q)..' kN/m',7,118)
+    if result.parameters.support==2 then
         gc:setFont('sansserif','r',9);color(gc,255,200,112)
         if s.lref_factor==2.5 then
             label(gc,'Lref=2.5L (EC2/NA)',7,136)
@@ -321,7 +322,7 @@ local function load_arrow(gc,xc,tail,tip,halfwidth)
     gc:fillPolygon({x-halfwidth,base,x+halfwidth,base,x,tip})
 end
 local function diagram(gc,w,h)
-    local p=result.p
+    local p=result.parameters
     local left,right=23,w-23
     local info=sec_info()
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
@@ -363,7 +364,7 @@ local function diagram(gc,w,h)
     local min,max=math.huge,-math.huge
     for i=0,100 do
         local x=p.L*i/100
-        local v=Beam.at(result,x)
+        local v=BeamPreset.at(result,x)
         local ordinate=(mode==1 and v.M) or (mode==2 and v.V) or (v.w*1000)
         data[i+1]=ordinate
         if ordinate<min then min=ordinate end
@@ -382,14 +383,14 @@ local function diagram(gc,w,h)
         gc:drawLine(x0,mid+ordinate_sign*amp*data[i]/scale,x1,mid+ordinate_sign*amp*data[i+1]/scale)
     end
     local xx=left+(right-left)*cursor
-    local v=Beam.at(result,p.L*cursor)
+    local v=BeamPreset.at(result,p.L*cursor)
     local ordinate=(mode==1 and v.M) or (mode==2 and v.V) or (v.w*1000)
     color(gc,173,198,210);gc:setPen('thin','dotted')
     gc:drawLine(xx,top,xx,bottom)
     color(gc,244,244,244);gc:setFont('sansserif','r',10)
     label(gc,'x='..fmt(cursor*p.L)..' m  '..namesplot[mode]..'='..fmt(ordinate),8,h-42)
-    local r=result.r
-    label(gc,'RA='..fmt(r[2])..' RB='..fmt(p.support==2 and 0 or r[#r-1])..' kN',8,h-29)
+    local r=result.reactions
+    label(gc,'RA='..fmt(r.left.Ry)..' RB='..fmt(r.right.Ry)..' kN',8,h-29)
     color(gc,171,193,207);gc:setFont('sansserif','r',9)
     label(gc,'UP/DOWN cursor | ENTER results',8,h-17)
 end
@@ -536,7 +537,9 @@ function on.arrowUp()
     end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
-        if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
+        if result then
+            result.deflection_check=BeamPreset.deflection_check(result,settings.limit,lref_factor())
+        end
     elseif page==2 then cursor=math.min(1,cursor+0.025)
     else commit();move_field(-1) end
     redraw()
@@ -548,7 +551,9 @@ function on.arrowDown()
     end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
-        if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
+        if result then
+            result.deflection_check=BeamPreset.deflection_check(result,settings.limit,lref_factor())
+        end
     elseif page==2 then cursor=math.max(0,cursor-0.025)
     else commit();move_field(1) end
     redraw()

@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+- Activated the single productive FEA route: section EI/self-weight → `BeamPreset.model` → `Frame.solve` → Frame recovery/extrema → preset summary → UI/CAS. Removed the legacy numerical solver and its build dependency.
+- Retained the four existing single-span presets, selector transactions, input/catalog/manual EI, signed loads and arrows, M/V/w diagrams/cursor, analytical extrema, L/250 and L/300 comparisons, concrete cantilever `2.5L`, `AGREE LIMIT`, and all eight CAS values. Continuous beams and frames remain engine capabilities only.
+- Preserved the v0.3.3 saved-document contract and failure/selector rollback behavior; self-weight remains separate and is added exactly once. Limit selection updates the comparison without solving again.
+- Generated-bundle golden/adjudication regressions: 2,009 ordinary equivalents, two adjudicated, five RESOLVED legacy failures and 26 invalid inputs. Frozen mechanics, fixtures and all 394 original Frame oracles retained unchanged.
+- All 11 suites pass under Lua 5.1.5 and Lua 5.4.7, including real UI-to-Frame instrumentation, cursor comparisons, persistence, rollback, native-CAS mock and target canvas checks. See `VALIDATION_P2B.md` for package details.
+- BXBENCH measurements from the original CX CAS remain solver references, not UI timings. Final v0.4.0 hardware acceptance is pending owner testing of the delivered package.
 - P1C.1: compatibility check scale floored by member end-force reference; fixes false rejection of loads near rigid supports. The end-force/load-based floor is an experimentally validated rounding tolerance, not a rigorous bound. The implied absolute compatibility tolerances are δw = 1e-14·F·L³/EI and δθ = 1e-14·F·L²/EI (about 45 times double-precision machine epsilon times the force reference); near rigid supports, recovery errors below these scales are no longer detected.
 
 ## 0.3.3

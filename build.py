@@ -3,7 +3,8 @@ root=Path(__file__).resolve().parent
 parts=[]
 for name, marker, localname in [
     ('section_db.lua','return DB\n','DB'),
-    ('beam_core.lua','return Beam\n','Beam'),
+    ('frame_core.lua','return Frame\n','Frame'),
+    ('beam_preset.lua','return BeamPreset\n','BeamPreset'),
     ('beam_ui.lua',None,None)]:
     src=(root/'src'/name).read_text(encoding='utf-8')
     if marker:
@@ -14,7 +15,7 @@ for name, marker, localname in [
     if localname:
         src=src.replace('local '+localname+' = {}',localname+' = {}',1)
     parts.append(src)
-out='-- BeamCX v0.3.3 (generated).\n'+'\n'.join(parts)
+out='-- BeamCX v0.4.0 (generated).\n'+'\n'.join(parts)
 (root/'BeamCX.lua').write_text(out, encoding='utf-8')
 print(f'Wrote BeamCX.lua: {len(out.encode()):,} bytes')
 print('Convert to .tns with: ~/Luna/luna BeamCX.lua BeamCX.tns')

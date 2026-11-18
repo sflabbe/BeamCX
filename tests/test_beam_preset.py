@@ -1,6 +1,6 @@
-"""Physical equivalence to the frozen v0.3.3 golden; optional --live-beam check.
+"""Physical equivalence to the frozen v0.3.3 golden and adjudication fixtures.
 
-Default tests need only stdlib + liblua5.4, never the legacy solver. --lua lua5.1
+Tests load the generated application bundle with stdlib + liblua5.4. --lua lua5.1
 runs the identical assertions with the target runtime.
 """
 import argparse
@@ -24,8 +24,8 @@ for case in fixture['cases']:
         case['reference']=adjudication['references'][case['name']]
         case['adjudicated']=case['name'] in adjudication['adjudicated']
 
-script='Frame=dofile('+builder.literal(str(root/'src/frame_core.lua'))+')\n'
-script+='local Preset=dofile('+builder.literal(str(root/'src/beam_preset.lua'))+')\n'
+script='platform={window={invalidate=function() end}}\n'
+script+='dofile('+builder.literal(str(root/'BeamCX.lua'))+')\nlocal Preset=BeamPreset\n'
 script+='local cases={}\n'
 # Lua 5.1 limits constants per function; batch fixture literals into functions.
 for offset in range(0,len(fixture['cases']),100):
@@ -167,17 +167,7 @@ print('PASS P0: four presets and all eight bx_* witnesses; unloaded zero respons
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lua')
-    parser.add_argument('--live-beam',action='store_true')
     args=parser.parse_args()
-    if args.live_beam:
-        source=root/'src/beam_core.lua'
-        assert hashlib.sha256(source.read_bytes()).hexdigest()==fixture['source_sha256']
-        # Golden serialization was generated in Lua 5.4. Recheck that canonical
-        # runtime exactly, then run the physical equivalence in the requested Lua.
-        results=builder.run_beam(fixture['cases'],source)
-        for case,result in zip(fixture['cases'],results):
-            assert result==case['beam'],case['name']+' differs from live Beam'
-        print('PASS live Beam (canonical Lua 5.4): SHA-256 and all golden outputs identical',flush=True)
     if args.lua:
         subprocess.run([args.lua,'-'],input=script,text=True,check=True);return
     lib=ctypes.CDLL('liblua5.4.so.0')

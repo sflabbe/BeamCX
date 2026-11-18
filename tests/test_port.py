@@ -15,25 +15,26 @@ lib.lua_close.argtypes=[ctypes.c_void_p]
 vm=lib.luaL_newstate()
 lib.luaL_openlibs(vm)
 root=Path(__file__).resolve().parent.parent
-script = f'''\nBeam=dofile({str(root/'src'/'beam_core.lua')!r})
+script = f'''\nFrame=dofile({str(root/'src'/'frame_core.lua')!r})
+local BeamPreset=dofile({str(root/'src'/'beam_preset.lua')!r})
 local function eq(x,y) assert(math.abs(x-y)<1e-7*math.max(1,math.abs(y)),tostring(x)..' != '..tostring(y)) end
-local function solve(p) local s,e=Beam.solve(p); assert(s,e); eq(s.force_residual,0);eq(s.moment_residual,0); return s end
+local function solve(p) local s,e=BeamPreset.solve(p); assert(s,e); eq(s.frame.checks.Fy,0);eq(s.frame.checks.Mz,0); return s end
 local s=solve{{L=6,q=10,P=0,a=3,EI=10000,support=1}}
-eq(s.r[2],30);eq(s.r[#s.r-1],30)
-eq(Beam.at(s,3).M,45)
-eq(Beam.at(s,3).w,-5*10*6^4/(384*10000))
-local a,b,c,d=Beam.moment_extrema(s);eq(c,45);eq(d,3)
+eq(s.reactions.left.Ry,30);eq(s.reactions.right.Ry,30)
+eq(BeamPreset.at(s,3).M,45)
+eq(BeamPreset.at(s,3).w,-5*10*6^4/(384*10000))
+local extrema=BeamPreset.moment_extrema(s);eq(extrema.maximum.value,45);eq(extrema.maximum.position,3)
 s=solve{{L=6,q=0,P=12,a=6,EI=10000,support=2}}
-eq(s.r[2],12);eq(s.r[3],72);eq(Beam.at(s,0).M,-72);eq(Beam.at(s,6).w,-12*6^3/(3*10000))
+eq(s.reactions.left.Ry,12);eq(s.reactions.left.Mz,72);eq(BeamPreset.at(s,0).M,-72);eq(BeamPreset.at(s,6).w,-12*6^3/(3*10000))
 s=solve{{L=6,q=10,P=0,a=3,EI=10000,support=3}}
-eq(Beam.at(s,0).M,-30);eq(Beam.at(s,3).M,15)
+eq(BeamPreset.at(s,0).M,-30);eq(BeamPreset.at(s,3).M,15)
 s=solve{{L=6,q=10,P=0,a=3,EI=10000,support=4}}
-eq(Beam.at(s,0).M,-45);eq(Beam.at(s,3.75).M,9*10*6^2/128)
-eq(s.r[#s.r-1],3*10*6/8)
+eq(BeamPreset.at(s,0).M,-45);eq(BeamPreset.at(s,3.75).M,9*10*6^2/128)
+eq(s.reactions.right.Ry,3*10*6/8)
 s=solve{{L=6,q=0,P=12,a=2,EI=10000,support=1}}
-eq(s.r[2],8);eq(s.r[#s.r-1],4);eq(Beam.at(s,2).M,16)
-local before=Beam.at(s,2-1e-6).V;local after=Beam.at(s,2+1e-6).V;eq(before-after,12)
-local fail,msg=Beam.solve{{L=0,q=10,P=0,a=0,EI=10000,support=1}};assert(fail==nil and msg)
+eq(s.reactions.left.Ry,8);eq(s.reactions.right.Ry,4);eq(BeamPreset.at(s,2).M,16)
+local before=BeamPreset.at(s,2-1e-6).V;local after=BeamPreset.at(s,2+1e-6).V;eq(before-after,12)
+local fail,msg=BeamPreset.solve{{L=0,q=10,P=0,a=0,EI=10000,support=1}};assert(fail==nil and msg)
 print('PASS: 5 structural cases + mechanics + negative input')
 -- Smoke test the UI with a draw-only fake graphics context and keyboard handlers.
 platform={{window={{width=function() return 320 end,height=function() return 212 end,invalidate=function() end}}}}

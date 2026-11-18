@@ -1,25 +1,27 @@
 -- Also runnable directly: lua5.1 tests/quick_check.lua /path/to/BeamCX
 local root=(...) or '.'
-local Beam=dofile(root..'/src/beam_core.lua')
+Frame=dofile(root..'/src/frame_core.lua')
+local BeamPreset=dofile(root..'/src/beam_preset.lua')
 local DB=dofile(root..'/src/section_db.lua')
 local function eq(a,b)
     assert(type(a)=='number' and math.abs(a-b)<=1e-8*math.max(1e-5,math.abs(b)),
         tostring(a)..' != '..tostring(b))
 end
 local function solve(L,q,P,a,EI,support)
-    local sol,msg=Beam.solve{L=L,q=q,P=P,a=a,EI=EI,support=support}
+    local sol,msg=BeamPreset.solve{L=L,q=q,P=P,a=a,EI=EI,support=support}
     assert(sol,msg)
     return sol
 end
 local function extrema(sol,w,x)
-    local actual,pos=Beam.deflection_extrema(sol)
+    local maximum=BeamPreset.deflection_extrema(sol)
+    local actual,pos=maximum.absolute*1000,maximum.position
     eq(actual,w);eq(pos,x)
-    eq(actual,math.abs(Beam.at(sol,pos).w)*1000)
+    eq(actual,math.abs(BeamPreset.at(sol,pos).w)*1000)
 end
 local L,q,EI=6,10,10000
 local simple=solve(L,q,0,3,EI,1)
 extrema(simple,5*q*L^4/(384*EI)*1000,L/2)
-assert(Beam.at(simple,L/2).w<0,'downward displacement must stay negative')
+assert(BeamPreset.at(simple,L/2).w<0,'downward displacement must stay negative')
 extrema(solve(L,q,0,3,EI,2),q*L^4/(8*EI)*1000,L)
 extrema(solve(L,-q,0,3,EI,1),5*q*L^4/(384*EI)*1000,L/2)
 extrema(solve(L,q,0,3,EI,3),q*L^4/(384*EI)*1000,L/2)
@@ -41,27 +43,28 @@ local z=(1+math.sqrt(21))/20
 local expected_x=L*z
 local expected_w=math.abs(-q*expected_x*(L^3-2*L*expected_x^2+expected_x^3)/(24*EI)
     +(0.6*q*L)*expected_x*(3*L^2-4*expected_x^2)/(48*EI))*1000
-local actual_w,actual_x=Beam.deflection_extrema(mixed)
+local maximum=BeamPreset.deflection_extrema(mixed)
+local actual_w,actual_x=maximum.absolute*1000,maximum.position
 eq(actual_w,expected_w)
 assert(math.min(math.abs(actual_x-expected_x),math.abs(actual_x-(L-expected_x)))<1e-8)
 -- Tiny loads must not disappear behind an absolute slope-root tolerance.
 extrema(solve(L,1e-12,0,3,EI,1),5*1e-12*L^4/(384*EI)*1000,L/2)
 local zero=solve(L,0,0,3,EI,1)
-local check=Beam.deflection_check(zero,250)
-eq(check.w_abs_max,0);assert(check.ratio==nil and check.status=='N/A')
-check=Beam.deflection_check(simple,250)
-eq(check.ratio,L*1000/check.w_abs_max)
-eq(check.u250,check.w_abs_max/(L*1000/250))
-eq(check.u300,check.w_abs_max/(L*1000/300))
+local check=BeamPreset.deflection_check(zero,250)
+eq(zero.summary.bx_wmax,0);assert(check.span_deflection_ratio==nil and check.status=='N/A')
+check=BeamPreset.deflection_check(simple,250)
+eq(check.span_deflection_ratio,L*1000/simple.summary.bx_wmax)
+eq(check.utilization.L250,simple.summary.bx_wmax/(L*1000/250))
+eq(check.utilization.L300,simple.summary.bx_wmax/(L*1000/300))
 assert(check.status=='OK')
 -- A deflection of L/275 passes L/250 and fails L/300.
 local target=L/275
 local middle=solve(L,q,0,3,5*q*L^4/(384*target),1)
-assert(Beam.deflection_check(middle,250).status=='OK')
-assert(Beam.deflection_check(middle,300).status=='EXCEEDED')
+assert(BeamPreset.deflection_check(middle,250).status=='OK')
+assert(BeamPreset.deflection_check(middle,300).status=='EXCEEDED')
 for _,limit in ipairs{250,300} do
     local at_limit=solve(L,q,0,3,5*q*L^4/(384*(L/limit)),1)
-    assert(Beam.deflection_check(at_limit,limit).status=='OK')
+    assert(BeamPreset.deflection_check(at_limit,limit).status=='OK')
 end
 print('PASS: analytical deflection extrema, signed loads, segment boundaries, multiple roots, L/250 and L/300')
 
@@ -222,9 +225,9 @@ for support=1,4 do
     on.restore(model)
     values=export()
     local sol=solve(L,-10,12,2,EI,support)
-    local lo,_,hi=Beam.moment_extrema(sol)
+    local lo,hi=sol.moments.minimum.value,sol.moments.maximum.value
     eq(values.bx_mmin,lo);eq(values.bx_mmax,hi)
-    eq(values.bx_ra,sol.r[2]);eq(values.bx_rb,sol.r[#sol.r-1])
+    eq(values.bx_ra,sol.reactions.left.Ry);eq(values.bx_rb,sol.reactions.right.Ry)
 end
 -- Native returned errors, exceptions and unavailable API must never claim success.
 var.store=function(name,value)
@@ -242,11 +245,11 @@ local called=0
 var={store=function() called=called+1 end}
 local bad=on.save();bad.params.L=0;bad.page=2;bad.mode=4
 on.restore(bad);on.enterKey();eq(called,0)
-contains('invalid L, q, P, a or EI')
+contains('invalid beam dimensions, rigidity or loads')
 -- Valid recovery, then invalid edit: no stale result exports.
 local recovered=on.save();recovered.params.L=6;recovered.page=1
 on.restore(recovered)
 -- edit_index was q above; move up once to L, reject zero.
 on.arrowUp();edit('0');on.tabKey();eq(on.save().page,1);eq(called,0)
-contains('invalid L, q, P, a or EI')
+contains('invalid beam dimensions, rigidity or loads')
 print('PASS: CAS names/units/solver values, all supports, returned errors, exceptions, missing API, failed-solve blocking')

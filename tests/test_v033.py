@@ -158,8 +158,8 @@ end
 local weighted=model(1,5,-0.1,0)
 weighted.settings.self_weight=true
 on.restore(weighted);paint()
-assert(on.save().params.q<0 and _BX_TEST_STATE().result.p.q>0)
-verify_loads(_BX_TEST_STATE().result.p.q,0)
+assert(on.save().params.q<0 and _BX_TEST_STATE().result.parameters.q>0)
+verify_loads(_BX_TEST_STATE().result.parameters.q,0)
 width,height=318,212;on.restore(model(4,1,10,12));paint()
 local bottom,highest,beam_y=verify_loads(10,12)
 eq(bottom,43);eq(highest,47);eq(beam_y,73)
@@ -185,21 +185,25 @@ end
 print('PASS: EI auto suffix stays in the value column, separated from caption and units')
 
 -- 4. The core defaults to the old factor 1 and keeps physical extrema unchanged.
-local cantilever=assert(Beam.solve{L=6,q=10,P=0,a=3,EI=10000,support=2})
+local cantilever=assert(BeamPreset.solve{L=6,q=10,P=0,a=3,EI=10000,support=2})
 for _,factor in ipairs{1,2.5} do
-    local s=Beam.deflection_check(cantilever,250,factor)
-    eq(s.w_abs_max,162);eq(s.x_wmax,6)
-    eq(s.lref_factor,factor);eq(s.lref,6*factor)
-    eq(s.ratio,(6*factor)*1000/162)
-    eq(s.u250,factor==1 and 6.75 or 2.70)
-    eq(s.u300,factor==1 and 8.10 or 3.24)
+    local s=BeamPreset.deflection_check(cantilever,250,factor)
+    eq(cantilever.summary.bx_wmax,162);eq(cantilever.deflection.position,6)
+    eq(s.lref_factor,factor);eq(s.reference_length,6*factor)
+    eq(s.span_deflection_ratio,(6*factor)*1000/162)
+    eq(s.utilization.L250,factor==1 and 6.75 or 2.70)
+    eq(s.utilization.L300,factor==1 and 8.10 or 3.24)
     assert(s.status=='EXCEEDED')
-    local summary=Beam.summary(cantilever,250,factor)
-    for key,value in pairs(s) do assert(summary[key]==value,key..' lost by summary') end
+    local summary=BeamPreset.summary(cantilever)
+    eq(summary.bx_wmax,162);eq(summary.bx_xwmax,6)
 end
-local default=Beam.deflection_check(cantilever,250)
-local explicit=Beam.deflection_check(cantilever,250,1)
-for key,value in pairs(default) do assert(explicit[key]==value,'default factor must preserve v0.3.2') end
+local default=BeamPreset.deflection_check(cantilever,250)
+local explicit=BeamPreset.deflection_check(cantilever,250,1)
+for key,value in pairs(default) do
+    if type(value)=='table' then
+        for k,v in pairs(value) do eq(explicit[key][k],v) end
+    else assert(explicit[key]==value,'default factor must preserve v0.3.2') end
+end
 -- UI decides from material and support, including after changing the limit.
 for _,size in ipairs{{318,212},{320,240}} do
     width,height=size[1],size[2]
@@ -207,10 +211,10 @@ for _,size in ipairs{{318,212},{320,240}} do
         for support=1,4 do
             on.restore(model(support,material,10,0,2,4))
             local text=paint()
-            local summary=_BX_TEST_STATE().summary
+            local summary=_BX_TEST_STATE().result.deflection_check
             local concrete=DB.materials[material].kind=='concrete'
             local factor=(support==2 and concrete) and 2.5 or 1
-            eq(summary.lref_factor,factor);eq(summary.lref,6*factor)
+            eq(summary.lref_factor,factor);eq(summary.reference_length,6*factor)
             assert(contains(text,'Lref=2.5L (EC2/NA)')==(support==2 and concrete))
             assert(contains(text,'CANTILEVER: AGREE LIMIT')==(support==2 and not concrete))
             assert(contains(text,'Lref/|w|=')==(support==2 and concrete))
@@ -223,8 +227,8 @@ for _,size in ipairs{{318,212},{320,240}} do
                     end
                 end
             end
-            on.arrowUp();eq(_BX_TEST_STATE().summary.lref_factor,factor)
-            on.arrowDown();eq(_BX_TEST_STATE().summary.lref_factor,factor)
+            on.arrowUp();eq(_BX_TEST_STATE().result.deflection_check.lref_factor,factor)
+            on.arrowDown();eq(_BX_TEST_STATE().result.deflection_check.lref_factor,factor)
         end
     end
 end
@@ -253,9 +257,9 @@ end
 for _,material in ipairs{1,3,5} do
     on.restore(model(2,material,10,0,2,4))
     local sol=_BX_TEST_STATE().result
-    local old_units=Beam.summary(sol,250) -- v0.3.2 factor default
-    local expected={old_units.mmax,old_units.mmin,old_units.vabs,old_units.w_abs_max,
-        old_units.x_wmax,old_units.ra,old_units.rb,old_units.ei}
+    local old_units=BeamPreset.summary(sol) -- physical CAS quantities ignore the comparison factor
+    local expected={old_units.bx_mmax,old_units.bx_mmin,old_units.bx_vabs,old_units.bx_wmax,
+        old_units.bx_xwmax,old_units.bx_ra,old_units.bx_rb,old_units.bx_ei}
     local values={};var={store=function(name,value) values[name]=value end}
     on.enterKey()
     for i,name in ipairs(names) do eq(values[name],expected[i]) end

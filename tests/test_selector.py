@@ -64,9 +64,9 @@ print('PASS: selector initial page and temporary focus')
 -- 2. All sixteen grid transitions, with clamping and no solves / editor changes.
 local arrows={on.arrowUp,on.arrowDown,on.arrowLeft,on.arrowRight}
 local expected={{1,3,1,2},{2,4,1,2},{1,3,3,4},{2,4,3,4}}
-local original=Beam.solve
+local original=Frame.solve
 local calls=0
-Beam.solve=function(p) calls=calls+1;return original(p) end
+Frame.solve=function(p) calls=calls+1;return original(p) end
 for c=1,4 do
     for i,arrow in ipairs(arrows) do
         focus(c)
@@ -88,7 +88,7 @@ for _,key in ipairs{on.tabKey,function() on.charIn('5') end,on.backspaceKey,on.e
     same(saved,on.save())
 end
 assert(calls==0,'inert keys must not recalculate')
-Beam.solve=original
+Frame.solve=original
 print('PASS: all grid transitions and inert keys preserve the confirmed model and result references')
 
 -- 4. P0 witnesses, recorded before any source modification (EI=10000).
@@ -101,19 +101,19 @@ local witnesses={
 for c=1,4 do
     fresh();focus(c)
     local before=state()
-    local solve=Beam.solve
+    local solve=Frame.solve
     local count=0
-    Beam.solve=function(p) count=count+1;return solve(p) end
+    Frame.solve=function(p) count=count+1;return solve(p) end
     on.enterKey()
-    Beam.solve=solve
+    Frame.solve=solve
     local s=state()
     assert(count==1,'Enter must solve once')
     assert(s.page==1 and s.support==c and s.result~=nil and s.selector_error==nil)
     assert(not rawequal(before.result,s.result),'Enter must install the successful result')
     eq(on.save().params.L,6);eq(on.save().params.q,10);eq(on.save().params.P,0);eq(s.EI,10000)
-    eq(s.summary.ra,witnesses[c].ra);eq(s.summary.rb,witnesses[c].rb)
-    eq(s.summary.mmin,witnesses[c].mmin);eq(s.summary.mmax,witnesses[c].mmax)
-    eq(s.summary.w_abs_max,witnesses[c].w)
+    eq(s.summary.bx_ra,witnesses[c].ra);eq(s.summary.bx_rb,witnesses[c].rb)
+    eq(s.summary.bx_mmin,witnesses[c].mmin);eq(s.summary.bx_mmax,witnesses[c].mmax)
+    eq(s.summary.bx_wmax,witnesses[c].w)
 end
 print('PASS: Enter confirms all four presets with unchanged P0 reaction, moment and deflection witnesses')
 
@@ -155,10 +155,10 @@ assert(state().export_message=='CAS: 8 variables stored')
 on.escapeKey();focus(3)
 local before,saved=state(),on.save()
 assert(before.result~=nil and before.summary~=nil and before.q_sw>0 and before.self_weight)
-original=Beam.solve
+original=Frame.solve
 local failure_calls=0
-Beam.solve=function(p)
-    if p.support==3 then failure_calls=failure_calls+1;return nil,'selector candidate failed' end
+Frame.solve=function(p)
+    if p.supports[2].rz==true then failure_calls=failure_calls+1;return nil,'selector candidate failed' end
     return original(p)
 end
 -- Temporary data doubles ensure recalc really changes EI, q_sw and ON/OFF
@@ -166,7 +166,7 @@ end
 local oldE,oldMass=DB.materials[5].E,DB.profiles[6][3]
 DB.materials[5].E=oldE+1000;DB.profiles[6][3]=nil
 on.enterKey()
-Beam.solve=original
+Frame.solve=original
 DB.materials[5].E=oldE;DB.profiles[6][3]=oldMass
 assert(failure_calls==1)
 local after=state()
@@ -189,13 +189,13 @@ local bad=on.save();bad.params.L=0;bad.page=1
 on.restore(bad);assert(state().err~=nil)
 on.escapeKey();focus(2)
 before=state()
-original=Beam.solve
-Beam.solve=function(p)
+original=BeamPreset.solve
+BeamPreset.solve=function(p)
     if p.support==2 then return nil,'different candidate error' end
     return original(p)
 end
 on.enterKey()
-Beam.solve=original
+BeamPreset.solve=original
 unchanged(before,state(),false)
 assert(state().selector_error=='different candidate error' and state().err==before.err)
 print('PASS: failed Enter restores exact result/summary identity, EI, old error, CAS message, weight and page; retry succeeds')
@@ -238,7 +238,7 @@ on.enterKey()
 assert(state().export_message=='CAS: 8 variables stored')
 local exported_count=0
 for _ in pairs(exported) do exported_count=exported_count+1 end
-assert(exported_count==8 and exported.bx_mmax==45)
+assert(exported_count==8);eq(exported.bx_mmax,45)
 for target_page=2,3 do
     fresh();on.enterKey();on.arrowDown()
     on.charIn('.');on.charIn('.');on.enterKey()
@@ -265,7 +265,7 @@ for _,key in ipairs{'L','q','P','a','support'} do eq(restored.params[key],v02.pa
 same(restored.section,v02.section)
 eq(restored.params.EI,DB.compute(v02.section).EI)
 assert(restored.settings.self_weight==false and restored.settings.limit==250)
-eq(state().result.p.q,7)
+eq(state().result.parameters.q,7)
 fresh();focus(3);on.enterKey();on.escapeKey()
 local selector_saved=on.save()
 assert(selector_saved.page==0 and selector_saved.params.support==3)
@@ -288,11 +288,11 @@ end
 fresh()
 local reference_moment=upvalue(upvalue(on.paint,'draw_selector'),'selector_moment')
 for c=1,4 do
-    local sol,message=Beam.solve{L=1,q=1,P=0,a=0,EI=1,support=c}
+    local sol,message=BeamPreset.solve{L=1,q=1,P=0,a=0,EI=1,support=c}
     assert(sol,message)
     for j=0,10 do
         local xi=j/10
-        assert(math.abs(reference_moment(c,xi)-Beam.at(sol,xi).M)<1e-9,
+        assert(math.abs(reference_moment(c,xi)-BeamPreset.at(sol,xi).M)<1e-9,
             'reference coefficients disagree with solver for support '..c)
     end
 end
@@ -336,11 +336,11 @@ local function paint(c,has_error)
     gc.fill={};gc.texts={};gc.lines=0
     gc.curves={};gc.axes={};gc.schematics={}
     local before=state()
-    local solve=Beam.solve
+    local solve=Frame.solve
     local paint_solves=0
-    Beam.solve=function(p) paint_solves=paint_solves+1;return solve(p) end
+    Frame.solve=function(p) paint_solves=paint_solves+1;return solve(p) end
     on.paint(gc)
-    Beam.solve=solve
+    Frame.solve=solve
     assert(paint_solves==0,'selector painting must never solve')
     unchanged(before,state(),true)
     assert(#gc.fill==6,'expected background, header and four cards')
@@ -442,10 +442,10 @@ for _,size in ipairs{{318,212},{320,212},{320,240}} do
     width,height=size[1],size[2]
     fresh()
     for c=1,4 do paint(c,false) end
-    original=Beam.solve
-    Beam.solve=function() return nil,string.rep('candidate failed ',10) end
+    original=Frame.solve
+    Frame.solve=function() return nil,string.rep('candidate failed ',10) end
     on.enterKey()
-    Beam.solve=original
+    Frame.solve=original
     assert(state().page==0 and state().selector_error~=nil)
     paint(4,true)
 end
@@ -455,10 +455,10 @@ width,height=318,180
 fresh()
 gc.fill={};gc.texts={};gc.lines=0;gc.curves={};gc.axes={};gc.schematics={}
 local solves_small=0
-original=Beam.solve
-Beam.solve=function(p) solves_small=solves_small+1;return original(p) end
+original=Frame.solve
+Frame.solve=function(p) solves_small=solves_small+1;return original(p) end
 on.paint(gc)
-Beam.solve=original
+Frame.solve=original
 assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==39 and solves_small==0)
 print('PASS: short silhouette zones omit M while retaining the compact support schematics')
 '''

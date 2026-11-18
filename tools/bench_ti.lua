@@ -1,7 +1,7 @@
 -- Independent CX benchmark; bundled by tools/build_bench.py, not build.py.
 -- Official TI API: timer.getMilliSecCounter(), wraps at 2^32 ms.
 -- https://education.ti.com/html/webhelp/EG_TINspireLUA/EN/content/libraries/timerlib/getmilliseccounter.htm
-local Bench={version='P5A.1 '..(BENCH_CORE_VERSION or 'Frame (unbundled)'),sha=BENCH_CORE_SHA or '',rows={}}
+local Bench={version='P6A '..(BENCH_CORE_VERSION or 'Frame (unbundled)'),sha=BENCH_CORE_SHA or '',rows={}}
 local function clock_ms()
     if timer and timer.getMilliSecCounter then return timer.getMilliSecCounter() end
     if os and os.clock then return os.clock()*1000 end -- PC reference only.
@@ -40,6 +40,8 @@ for n=2,5 do
     Bench.cases[#Bench.cases+1]={name='continuous '..n..' env',
         preset={spans=spans,left='PIN',right='PIN',g=8,q=5,EI=20000}}
 end
+Bench.cases[#Bench.cases+1]={name='portal FIX q+P+H+w',
+    portal={h=4,l=6,base='FIX',EIc=10000,EIb=15000,q=10,P=20,a=1.7,H=10,w=7}}
 local function recover(sol)
     local checksum=0
     if sol.bases then
@@ -50,6 +52,7 @@ local function recover(sol)
         end
         return checksum
     end
+    sol=sol.frame or sol
     -- Exactly 101 queries across user members; include physical end limits.
     for sample=0,100 do
         local member=sample%#sol.members+1
@@ -65,7 +68,8 @@ function Bench.measure(index,step)
     repeat
         local start=clock_ms()
         local sol,err
-        if case.preset then sol,err=ContinuousPreset.solve(case.preset) else sol,err=Frame.solve(case.model) end
+        if case.portal then sol,err=PortalPreset.solve(case.portal)
+        elseif case.preset then sol,err=ContinuousPreset.solve(case.preset) else sol,err=Frame.solve(case.model) end
         if not sol and err=='model too large for handheld' then return {name=case.name,guard=err} end
         if not sol then error(case.name..': '..tostring(err),0) end
         solve_ms=solve_ms+(clock_ms()-start)%4294967296
@@ -80,7 +84,7 @@ function Bench.measure(index,step)
         nr=nr+1
         if step then step() end
     until (nr>=3 and recovery_ms>=200) or nr>=4096
-    local frame=solved.bases and solved.bases[1] or solved
+    local frame=solved.frame or (solved.bases and solved.bases[1]) or solved
     return {name=case.name,nodes=#frame.nodes,dofs=frame.ndof,free=#frame.free,
         solve_ms=solve_ms/ns,recovery_ms=recovery_ms/nr,Nsolve=ns,Nrecover=nr,checksum=checksum}
 end

@@ -38,6 +38,7 @@ print('PASS: catalog manual/concrete/steel, IPE/HEA, units, invalid dimension')
 
 platform={{window={{width=function() return 320 end,height=function() return 212 end,invalidate=function() end}}}}
 dofile({str(root/'BeamCX.lua')!r})
+on.enterKey()
 local gc=setmetatable({{}},{{__index=function() return function() end end}})
 on.paint(gc)
 local start=on.save()

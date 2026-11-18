@@ -38,6 +38,7 @@ print('PASS: 5 structural cases + mechanics + negative input')
 -- Smoke test the UI with a draw-only fake graphics context and keyboard handlers.
 platform={{window={{width=function() return 320 end,height=function() return 212 end,invalidate=function() end}}}}
 dofile({str(root/'BeamCX.lua')!r})
+on.enterKey()
 local gc=setmetatable({{}},{{__index=function() return function() end end}})
 on.paint(gc);on.tabKey();on.paint(gc)
 on.arrowRight();on.arrowUp();on.arrowDown();on.paint(gc)

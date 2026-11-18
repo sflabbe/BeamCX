@@ -19,6 +19,7 @@ script = f'''
 platform={{window={{width=function() return 320 end,height=function() return 212 end,
                  invalidate=function() end}}}}
 dofile({str(root / 'BeamCX.lua')!r})
+on.enterKey()
 local gc={{pen='', segments={{}}}}
 function gc:setColorRGB() end
 function gc:setFont() end

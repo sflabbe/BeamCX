@@ -125,6 +125,7 @@ local function edit(value)
     for ch in string.gmatch(value,'.') do on.charIn(ch) end
     on.enterKey()
 end
+on.enterKey()
 local initial=on.save()
 assert(initial.settings.self_weight==false and initial.settings.limit==250)
 on.tabKey();eq(on.save().page,2)

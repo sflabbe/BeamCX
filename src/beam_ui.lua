@@ -6,7 +6,9 @@ local section={material=1,profile=6,b=250,h=450,manualEI=10000}
 local settings={self_weight=false,limit=250}
 local names={'support','L','q','P','a','EI'}
 local units={'','m','kN/m','kN','m','kN*m2'}
-local page=1 -- 1 beam input, 2 diagram, 3 sections
+local page=0 -- 0 system selector, 1 beam input, 2 diagram, 3 sections
+local sel_index=params.support -- temporary focus; params.support is authoritative
+local selector_error=nil
 local mode=1 -- 1 M, 2 V, 3 w, 4 compact results (inside page 2)
 local edit_index,sec_index=1,1
 local typing=nil
@@ -38,6 +40,24 @@ local function recalc()
     return result~=nil
 end
 recalc()
+
+local function open_selected_system()
+    local before={support=params.support,EI=params.EI,result=result,summary=summary,
+        err=err,export_message=export_message,q_sw=q_sw,
+        self_weight=settings.self_weight,page=page}
+    params.support=sel_index
+    recalc()
+    if result~=nil then
+        selector_error=nil;page=1
+    else
+        local message=err or 'calculation failed'
+        params.support=before.support;params.EI=before.EI
+        result=before.result;summary=before.summary;err=before.err
+        export_message=before.export_message;q_sw=before.q_sw
+        settings.self_weight=before.self_weight;page=before.page
+        selector_error=message
+    end
+end
 
 local function export_cas()
     export_message=nil
@@ -194,6 +214,40 @@ local function support(gc,x,y,isleft,clamp)
         if not isleft then gc:drawLine(x-10,y+16,x+10,y+16) end
     end
 end
+local function draw_selector(gc,w,h)
+    color(gc,215,225,236);gc:setFont('sansserif','r',10)
+    label(gc,'SELECT SYSTEM',8,28)
+    local margin,gap,top=8,8,46
+    local card_w=(w-2*margin-gap)/2
+    local card_h=(h-43-top-gap)/2
+    gc:setPen('thin','smooth')
+    for i=1,4 do
+        local x=margin+((i-1)%2)*(card_w+gap)
+        local y=top+math.floor((i-1)/2)*(card_h+gap)
+        if i==sel_index then color(gc,213,232,245)
+        else color(gc,23,46,62) end
+        gc:fillRect(x,y,card_w,card_h)
+        if i==sel_index then color(gc,18,44,66)
+        else color(gc,215,225,236) end
+        label(gc,presets[i],x+8,y+5)
+        local left,right,ybeam=x+21,x+card_w-21,y+33
+        gc:drawLine(left,ybeam,right,ybeam)
+        support(gc,left,ybeam,true,i~=1)
+        if i~=2 then support(gc,right,ybeam,false,i==3) end
+        -- Lower card space is reserved; no moment silhouette in P1.
+    end
+    gc:setFont('sansserif','r',9)
+    if selector_error then
+        color(gc,255,140,120)
+        local message=selector_error
+        while #message>0 and gc:getStringWidth(message)>w-16 do
+            message=string.sub(message,1,-2)
+        end
+        label(gc,message,8,h-33)
+    end
+    color(gc,171,193,207)
+    label(gc,'ARROWS select | ENTER open',8,h-15)
+end
 -- Draw one downward load arrow: shaft stops at the solid triangular head.
 -- Pixel-aligned geometry prevents two open V strokes from resembling stacked heads.
 local function load_arrow(gc,xc,top,tip,halfwidth)
@@ -274,6 +328,7 @@ function on.paint(gc)
     local h=platform.window:height()
     color(gc,12,25,36);gc:fillRect(0,0,w,h)
     header(gc,w)
+    if page==0 then draw_selector(gc,w,h);return end
     if page==3 then draw_section(gc,w,h)
     elseif page==2 and result then
         if mode==4 then draw_results(gc,w,h) else diagram(gc,w,h) end
@@ -338,11 +393,17 @@ local function step_selection(d)
     end
 end
 function on.tabKey()
+    if page==0 then return end
     commit()
-    if result then page=page%3+1 end
+    if result then
+        if page==1 then page=2
+        elseif page==2 then page=3
+        elseif page==3 then page=1 end
+    end
     redraw()
 end
 function on.enterKey()
+    if page==0 then open_selected_system();redraw();return end
     if page==1 then
         if edit_index==1 then step_selection(1) else commit() end
     elseif page==2 then
@@ -355,6 +416,7 @@ function on.enterKey()
     redraw()
 end
 function on.charIn(ch)
+    if page==0 then return end
     local can=false
     if page==1 then can=edit_index~=1 and (names[edit_index]~='EI' or section.material==1)
     elseif page==3 then
@@ -369,10 +431,16 @@ function on.charIn(ch)
     end
 end
 function on.backspaceKey()
+    if page==0 then return end
     if typing and #typing>0 then typing=string.sub(typing,1,-2) end
     redraw()
 end
-function on.escapeKey() typing=nil;err=nil;redraw() end
+function on.escapeKey()
+    if page==0 then return end
+    if typing~=nil then typing=nil;err=nil
+    else page=0;sel_index=params.support;selector_error=nil end
+    redraw()
+end
 local function move_field(d)
     if page==1 then
         edit_index=math.max(1,math.min(#names,edit_index+d))
@@ -386,6 +454,10 @@ local function move_field(d)
     end
 end
 function on.arrowUp()
+    if page==0 then
+        if sel_index>2 then sel_index=sel_index-2 end
+        redraw();return
+    end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
         if result then summary=Beam.summary(result,settings.limit) end
@@ -394,6 +466,10 @@ function on.arrowUp()
     redraw()
 end
 function on.arrowDown()
+    if page==0 then
+        if sel_index<=2 then sel_index=sel_index+2 end
+        redraw();return
+    end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
         if result then summary=Beam.summary(result,settings.limit) end
@@ -402,11 +478,19 @@ function on.arrowDown()
     redraw()
 end
 function on.arrowLeft()
+    if page==0 then
+        if sel_index%2==0 then sel_index=sel_index-1 end
+        redraw();return
+    end
     if page==2 then mode=(mode+2)%4+1
     else commit();step_selection(-1) end
     redraw()
 end
 function on.arrowRight()
+    if page==0 then
+        if sel_index%2==1 then sel_index=sel_index+1 end
+        redraw();return
+    end
     if page==2 then mode=mode%4+1
     else commit();step_selection(1) end
     redraw()
@@ -442,7 +526,17 @@ function on.restore(data)
         end
     end
     recalc()
-    if type(data.page)=='number' and data.page>=1 and data.page<=3 then page=data.page end
+    if type(data.page)=='number' and data.page>=0 and data.page<=3 then page=data.page end
+    if page==0 then sel_index=params.support;selector_error=nil end
     if type(data.mode)=='number' and data.mode>=1 and data.mode<=4 then mode=data.mode end
     if type(data.cursor)=='number' and data.cursor>=0 and data.cursor<=1 then cursor=data.cursor end
+end
+
+-- Read-only test snapshot. Result / summary references allow rollback identity
+-- checks; this accessor does not modify app state and is not part of the UI.
+function _BX_TEST_STATE()
+    return {page=page,sel_index=sel_index,selector_error=selector_error,
+        support=params.support,EI=params.EI,result=result,summary=summary,err=err,
+        export_message=export_message,q_sw=q_sw,self_weight=settings.self_weight,
+        typing=typing}
 end

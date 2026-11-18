@@ -1,4 +1,4 @@
--- BeamCX independent benchmark P2A (generated).
+-- BeamCX independent benchmark P5A (generated).
 -- BeamCX v0.4-P1C: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
 -- Units: m, kN, kNm; EA in kN, EI in kN*m^2. No TI API or Beam dependency.
 -- Global x right, y up, rotations CCW; downward loads are NEGATIVE.
@@ -16,12 +16,12 @@
 -- Springs act in global DOFs; reactions include their force -k*u.
 -- Global/projected member loads and axial thermal expansion are outside P1C.
 -- solve/assemble return nil,message on failure; at/extrema reject bad queries.
--- moment_extrema returns min, s_min, max, s_max; deflection_extrema w, s.
+-- moment_extrema and deflection_extrema return min, s_min, max, s_max.
 Frame = {}
 
 local PIVOT_TOL = 1e-12 -- |pivot| / original row maximum, after scaled pivoting.
 local CHECK_TOL = 1e-8 -- relative to largest applied force or origin moment.
-local MAX_NODES = 60 -- MODEL nodes only; provisional until CX measurements in P2.
+local MAX_NODES = 20 -- medido en CX CAS (BXBENCH): 20 nudos 2,7 s; 40 nudos 8,8 s; 60 nudos 20,7 s
 
 local function finite(x)
     return type(x)=='number' and x==x and math.abs(x)<math.huge
@@ -460,12 +460,6 @@ local function assemble(model)
             fixed=fixed,prescribed=prescribed,springs=springs,inactive_rotations=inactive_rotations,
             free=free,applied=applied}
 end
-function Frame.assemble(model)
-    local ok,result=pcall(assemble,model)
-    if ok then return result end
-    return nil,result
-end
-
 -- Dense LU, partial pivoting by |a_ik| / max_j |original a_ij|.
 -- Exactly zero row/column or pivot => mechanism; nonzero relative pivot below
 -- 1e-12 => ill-conditioned. Row scaling avoids comparing EA directly to EI.
@@ -684,20 +678,6 @@ function Frame.solve(model)
     return nil,result
 end
 
--- Integrate EI*w^(4)=qa+g*s four times, imposing w=w'=0 at 0,L.
--- The integration constants (before dividing by EI) are
--- C3=-qa*L/2-3*g*L^2/20, C2=qa*L^2/12+g*L^3/30, C1=C0=0.
--- Factoring gives w_p=s^2*(L-s)^2*[5qa+g*(s+2L)]/(120EI), degree 5.
--- Return both w_p and its exact derivative; exposed for the particular test.
-function Frame.load_particular(L,EI,qa,qb,s)
-    if qa==qb then
-        return qa*s^2*(L-s)^2/(24*EI),qa*s*(L-s)*(L-2*s)/(12*EI)
-    end
-    local g=(qb-qa)/L
-    local h=5*qa+g*(s+2*L)
-    return s^2*(L-s)^2*h/(120*EI),
-           (2*s*(L-s)*(L-2*s)*h+g*s^2*(L-s)^2)/(120*EI)
-end
 local function member_result(sol,member)
     if not finite(member) or member%1~=0 or not sol.members[member] then error('invalid member index',0) end
     return sol.members[member]
@@ -758,21 +738,297 @@ function Frame.moment_extrema(sol,member)
 end
 function Frame.deflection_extrema(sol,member)
     local m=member_result(sol,member)
-    local best,xbest=0,0
+    local lo,xlo,hi,xhi=math.huge,0,-math.huge,0
     for _,span in ipairs(m.elements[1].spans) do
         local function candidate(x)
             local _,_,w=span_value(span,x)
-            if math.abs(w)>math.abs(best) then best=w;xbest=span.x0+x end
+            if w<lo then lo=w;xlo=span.x0+x end
+            if w>hi then hi=w;xhi=span.x0+x end
         end
         candidate(0);candidate(span.L)
         roots_on_span(span,function(x) local _,_,_,theta=span_value(span,x);return theta end,candidate)
     end
-    return best,xbest
+    return lo,xlo,hi,xhi
+end
+
+-- Superposition of already recovered solutions; no assembly or linear solve.
+function Frame.combine(solutions,factors)
+    local function incompatible(reason) error('incompatible solutions: '..reason,0) end
+    local function copy(value,memo)
+        if type(value)~='table' then return value end
+        memo=memo or {}
+        if memo[value] then return memo[value] end
+        local out={};memo[value]=out
+        for k,v in pairs(value) do out[k]=copy(v,memo) end
+        return out
+    end
+    local function same(a,b)
+        if type(a)~=type(b) then return false end
+        if type(a)~='table' then return a==b end
+        for k,v in pairs(a) do if not same(v,b[k]) then return false end end
+        for k in pairs(b) do if a[k]==nil then return false end end
+        return true
+    end
+    local function combine()
+        if type(solutions)~='table' or type(factors)~='table' or #solutions==0 or #solutions~=#factors then
+            incompatible('solution/factor counts')
+        end
+        local base=solutions[1]
+        if type(base)~='table' or not base.u or not base.reactions or not base.members then incompatible('not a solved model') end
+        for k=1,#solutions do
+            local s=solutions[k]
+            if not finite(factors[k]) then incompatible('non-finite factor') end
+            if type(s)~='table' or not s.u or not s.reactions or not s.members then incompatible('not a solved model') end
+            if not same(base.nodes,s.nodes) then incompatible('nodes') end
+            for _,name in ipairs{'ndof','fixed','prescribed','springs','free','inactive_rotations'} do
+                if not same(base[name],s[name]) then incompatible(name) end
+            end
+            if #base.members~=#s.members then incompatible('member count') end
+            for i,m in ipairs(base.members) do
+                local other=s.members[i]
+                for _,key in ipairs{'i','j','L','c','s','EI','EA','hinge_i','hinge_j','alphaT','h','cuts'} do
+                    if not same(m[key],other[key]) then incompatible('member '..i..' '..key) end
+                end
+                local a,b=m.elements[1],other.elements[1]
+                if not a.spans or not b.spans or #a.spans~=#b.spans then incompatible('recovery spans') end
+                for j,span in ipairs(a.spans) do
+                    for _,key in ipairs{'x0','x1','L','EI'} do
+                        if span[key]~=b.spans[j][key] then incompatible('recovery '..key) end
+                    end
+                end
+            end
+        end
+        local out=copy(base)
+        if #solutions==1 and factors[1]==1 then return out end
+        local function sum(get)
+            local value,low=0,0
+            for k,s in ipairs(solutions) do value,low=compensated_add(value,low,factors[k]*get(s)) end
+            value=value+low
+            if not finite(value) then incompatible('non-finite combined response') end
+            return value
+        end
+        local function vector_sum(target,get)
+            for j=1,#target do
+                target[j]=sum(function(s) return get(s)[j] end)
+            end
+            if target.correction then
+                for j=1,#target.correction do
+                    target.correction[j]=sum(function(s) return get(s).correction[j] end)
+                end
+            end
+        end
+        vector_sum(out.u,function(s) return s.u end)
+        vector_sum(out.F,function(s) return s.F end)
+        for d in pairs(out.prescribed) do out.prescribed[d]=sum(function(s) return s.prescribed[d] end) end
+        for _,key in ipairs{'Fx','Fy','Mz'} do out.applied[key]=sum(function(s) return s.applied[key] end) end
+        out.applied.scale=0
+        for k,s in ipairs(solutions) do out.applied.scale=out.applied.scale+math.abs(factors[k])*s.applied.scale end
+        for i,r in ipairs(out.reactions) do
+            for _,key in ipairs{'Rx','Ry','Mz'} do r[key]=sum(function(s) return s.reactions[i][key] end) end
+        end
+        for i,m in ipairs(out.members) do
+            m.q=sum(function(s) return s.members[i].q end)
+            m.kappa=sum(function(s) return s.members[i].kappa end)
+            m.points={};m.moments={};m.distributed={};m.point_positions={}
+            for k,s in ipairs(solutions) do
+                local source=s.members[i]
+                for x in pairs(source.point_positions) do m.point_positions[x]=true end
+                for _,list in ipairs{{'points','P'},{'moments','M'},{'distributed','q1','q2'}} do
+                    for _,load in ipairs(source[list[1]]) do
+                        local item=copy(load)
+                        for j=2,#list do item[list[j]]=item[list[j]]*factors[k] end
+                        m[list[1]][#m[list[1]]+1]=item
+                    end
+                end
+            end
+            local el=m.elements[1]
+            for _,key in ipairs{'u','f','f_correction','fe','full_fe'} do
+                vector_sum(el[key],function(s) return s.members[i].elements[1][key] end)
+            end
+            el.N=sum(function(s) return s.members[i].elements[1].N end)
+            for j,span in ipairs(el.spans) do
+                for _,key in ipairs{'V','M','w','theta','qa','g','kappa'} do
+                    span[key]=sum(function(s) return s.members[i].elements[1].spans[j][key] end)
+                end
+            end
+        end
+        -- Source diagnostics certify their own solves, not this superposition.
+        out.checks=nil
+        return out
+    end
+    local ok,result=pcall(combine)
+    if ok then return result end
+    local message=tostring(result)
+    if not string.find(message,'incompatible solutions: ',1,true) then message='incompatible solutions: malformed solution' end
+    return nil,message
 end
 
 
 local BENCH_CORE_VERSION='v0.4-P1C'
-local BENCH_CORE_SHA='8169f4f91ec3ca4a8069458f40f98aeb44e29683dd8db1c4e0ea1606c7db8ac5'
+local BENCH_CORE_SHA='4eeb568504db1b9471b8aef72934f8bf70d7f2dd8dccd47204f092feeb807e4b'
+
+-- Continuous single-EI beams on Frame. No UI or CAS namespace (P5A).
+-- m, kN, kNm, EI in kN*m^2; g/q and reported deflection positive DOWN.
+ContinuousPreset = {MAX_SPANS=5}
+local Core=assert(Frame,'load Frame before continuous_preset.lua')
+local function convert(value) return -value end -- sole sign boundary
+local function finite(x) return type(x)=='number' and x==x and math.abs(x)<math.huge end
+local function parameters(p)
+    if type(p)~='table' or type(p.spans)~='table' or #p.spans<2 or #p.spans>ContinuousPreset.MAX_SPANS then
+        return nil,'expected 2 to '..ContinuousPreset.MAX_SPANS..' spans'
+    end
+    local out={spans={},EI=p.EI,g=p.g,q=p.q,left=p.left,right=p.right,
+        gG_sup=p.gG_sup==nil and 1.35 or p.gG_sup,gG_inf=p.gG_inf==nil and 1 or p.gG_inf,
+        gQ=p.gQ==nil and 1.5 or p.gQ,limit=p.limit==nil and 250 or p.limit}
+    for i,L in ipairs(p.spans) do
+        if not finite(L) or L<=0 then return nil,'invalid span length' end
+        out.spans[i]=L
+    end
+    if not finite(out.EI) or out.EI<=0 then return nil,'invalid EI' end
+    if not finite(out.g) or not finite(out.q) then return nil,'invalid uniform load' end
+    if (out.left~='PIN' and out.left~='FIX') or (out.right~='PIN' and out.right~='FIX') then return nil,'invalid end support' end
+    for _,key in ipairs{'gG_sup','gG_inf','gQ'} do
+        if not finite(out[key]) or out[key]<=0 then return nil,'invalid factor '..key end
+    end
+    if out.limit~=250 and out.limit~=300 then return nil,'invalid deflection limit' end
+    return out
+end
+function ContinuousPreset.model(p,case)
+    local p,err=parameters(p)
+    if not p then return nil,err end
+    local n=#p.spans
+    if case~='G' and (not finite(case) or case%1~=0 or case<1 or case>n) then return nil,'invalid load case' end
+    local m={nodes={{x=0,y=0}},members={},supports={},member_loads={}}
+    local x=0
+    for i,L in ipairs(p.spans) do
+        x=x+L;m.nodes[i+1]={x=x,y=0}
+        m.members[i]={i=i,j=i+1,EI=p.EI,EA=1000*p.EI/L^2}
+        m.member_loads[i]={member=i,type='udl',q=convert(case=='G' and p.g or (case==i and p.q or 0))}
+    end
+    for i=1,n+1 do
+        m.supports[i]={node=i,uy=true,ux=i==1 or (i==n+1 and p.right=='FIX'),
+            rz=(i==1 and p.left=='FIX') or (i==n+1 and p.right=='FIX')}
+    end
+    return m
+end
+local function pattern(mask,n)
+    local factors,names={1},{}
+    for i=1,n do
+        local active=math.floor(mask/2^(i-1))%2==1
+        factors[i+1]=active and 1 or 0
+        if active then names[#names+1]=tostring(i) end
+    end
+    return factors,#names>0 and table.concat(names,'-') or '-'
+end
+local function record(value,x,offset,name,gamma)
+    return {value=value,absolute=math.abs(value),x=x,position=offset+x,pattern=name,gammaG=gamma}
+end
+local function update(current,candidate,maximum)
+    if not current or (maximum and candidate.value>current.value) or (not maximum and candidate.value<current.value) then return candidate end
+    return current
+end
+local function solve(p)
+    local p,err=parameters(p)
+    if not p then return nil,err end
+    local n=#p.spans
+    local bases={}
+    for case=0,n do
+        local model=assert(ContinuousPreset.model(p,case==0 and 'G' or case))
+        local sol,message=Core.solve(model)
+        if not sol then return nil,message end
+        bases[case+1]=sol
+    end
+    local out={parameters=p,bases=bases,spans={},supports={},deflection_label='w car.',
+        factor_convention={status='OPEN',reference='EN 1990 Annex A1 and applicable NA'}}
+    local offsets={0}
+    for i,L in ipairs(p.spans) do
+        out.spans[i]={length=L,offset=offsets[i],deflection={label='w car.'}}
+        offsets[i+1]=offsets[i]+L
+    end
+    for i=1,n+1 do out.supports[i]={position=offsets[i]} end
+    local function moment(v,x,i)
+        -- Prescribed PIN boundary zeros; no response/sign recalculation.
+        if (i==1 and x==0 and p.left=='PIN') or (i==n and x==p.spans[i] and p.right=='PIN') then return 0 end
+        return v
+    end
+    for mask=0,2^n-1 do
+        local active,name=pattern(mask,n)
+        local car,message=Core.combine(bases,active)
+        if not car then return nil,message end
+        for i,L in ipairs(p.spans) do
+            local lo,xlo,hi,xhi=Core.deflection_extrema(car,i)
+            xlo=math.max(0,math.min(L,xlo));xhi=math.max(0,math.min(L,xhi))
+            if xlo==0 or xlo==L then lo=0 end
+            if xhi==0 or xhi==L then hi=0 end
+            local d=out.spans[i].deflection
+            d.down=update(d.down,record(math.max(0,convert(lo)),xlo,offsets[i],name),true)
+            d.up=update(d.up,record(math.min(0,convert(hi)),xhi,offsets[i],name),false)
+        end
+        for _,gamma in ipairs{p.gG_sup,p.gG_inf} do
+            local factors={gamma}
+            for j=1,n do factors[j+1]=p.gQ*active[j+1] end
+            local sol,message=Core.combine(bases,factors)
+            if not sol then return nil,message end
+            for i,L in ipairs(p.spans) do
+                local lo,xlo,hi,xhi=Core.moment_extrema(sol,i)
+                xlo=math.max(0,math.min(L,xlo));xhi=math.max(0,math.min(L,xhi))
+                hi=moment(hi,xhi,i)
+                out.spans[i].Mmax=update(out.spans[i].Mmax,record(hi,xhi,offsets[i],name,gamma),true)
+                for _,s in ipairs{0,L} do
+                    local v=Core.at(sol,i,s,s==0 and 'right' or 'left').V
+                    out.shear=update(out.shear,record(math.abs(v),s,offsets[i],name,gamma),true)
+                end
+            end
+            for j=1,n+1 do
+                local i=j==1 and 1 or j-1
+                local x=j==1 and 0 or p.spans[i]
+                local M=moment(Core.at(sol,i,x,x==0 and 'right' or 'left').M,x,i)
+                local support=out.supports[j]
+                support.Mmin=update(support.Mmin,record(M,0,offsets[j],name,gamma),false)
+                local R=sol.reactions[j].Ry
+                support.Rmax=update(support.Rmax,record(R,0,offsets[j],name,gamma),true)
+                support.Rmin=update(support.Rmin,record(R,0,offsets[j],name,gamma),false)
+            end
+        end
+    end
+    local Mmax,Mmin,Rmax,Wmax,Xw=-math.huge,math.huge,-math.huge,0,0
+    for i,span in ipairs(out.spans) do
+        if span.Mmax.value>0 then span.Mplus=span.Mmax end
+        local d=span.deflection
+        d.governing=d.down.absolute>=d.up.absolute and d.down or d.up
+        d.ratio=d.governing.absolute>0 and span.length/d.governing.absolute or nil
+        d.utilization={L250=d.governing.absolute/(span.length/250),L300=d.governing.absolute/(span.length/300)}
+        d.selected_limit=p.limit
+        d.status=not d.ratio and 'N/A' or (d.governing.absolute/(span.length/p.limit)<=1+1e-12 and 'OK' or 'EXCEEDED')
+        Mmax=math.max(Mmax,span.Mmax.value)
+        if d.governing.absolute>Wmax then Wmax=d.governing.absolute;Xw=d.governing.position end
+    end
+    for _,s in ipairs(out.supports) do Mmin=math.min(Mmin,s.Mmin.value);Rmax=math.max(Rmax,s.Rmax.value) end
+    out.summary={moment_max=Mmax,moment_min=Mmin,shear_absolute_max=out.shear.value,reaction_max=Rmax,
+        deflection_absolute_max=Wmax,deflection_position=Xw,rigidity=p.EI,span_count=n}
+    function out.envelope_at(x,side)
+        if not finite(x) or (side~=nil and side~='left' and side~='right') then error('invalid envelope query',0) end
+        x=math.max(0,math.min(offsets[n+1],x))
+        local i=1
+        while i<n and (x>offsets[i+1] or (x==offsets[i+1] and side=='right')) do i=i+1 end
+        local s=x-offsets[i]
+        local limit=side or (x==0 and 'right' or 'left')
+        local G=Core.at(bases[1],i,s,limit)
+        local values={Mmax=math.max(p.gG_sup*G.M,p.gG_inf*G.M),Mmin=math.min(p.gG_sup*G.M,p.gG_inf*G.M),
+            Vmax=math.max(p.gG_sup*G.V,p.gG_inf*G.V),Vmin=math.min(p.gG_sup*G.V,p.gG_inf*G.V)}
+        for j=2,#bases do
+            local Q=Core.at(bases[j],i,s,limit)
+            values.Mmax=values.Mmax+p.gQ*math.max(0,Q.M);values.Mmin=values.Mmin+p.gQ*math.min(0,Q.M)
+            values.Vmax=values.Vmax+p.gQ*math.max(0,Q.V);values.Vmin=values.Vmin+p.gQ*math.min(0,Q.V)
+        end
+        return values
+    end
+    return out
+end
+function ContinuousPreset.solve(p)
+    return solve(p)
+end
+
 -- Independent CX benchmark; bundled by tools/build_bench.py, not build.py.
 -- Official TI API: timer.getMilliSecCounter(), wraps at 2^32 ms.
 -- https://education.ti.com/html/webhelp/EG_TINspireLUA/EN/content/libraries/timerlib/getmilliseccounter.htm
@@ -808,8 +1064,23 @@ Bench.cases={{name='simple q+P',model=continuous(1)},
              {name='synthetic 20',model=continuous(19,true)},
              {name='synthetic 40',model=continuous(39,true)},
              {name='synthetic 60',model=continuous(59,true)}}
+-- P5A complete envelopes, including n+1 bases, all ULS/SLS patterns and extrema.
+for n=2,5 do
+    local lengths={4,6,5,3,7}
+    local spans={};for i=1,n do spans[i]=lengths[i] end
+    Bench.cases[#Bench.cases+1]={name='continua '..n..' env',
+        preset={spans=spans,left='PIN',right='PIN',g=8,q=5,EI=20000}}
+end
 local function recover(sol)
     local checksum=0
+    if sol.bases then
+        local L=sol.supports[#sol.supports].position
+        for sample=0,100 do
+            local v=sol.envelope_at(L*sample/100)
+            checksum=checksum+v.Mmax+v.Vmin
+        end
+        return checksum
+    end
     -- Exactly 101 queries across user members; include physical end limits.
     for sample=0,100 do
         local member=sample%#sol.members+1
@@ -824,7 +1095,9 @@ function Bench.measure(index,step)
     local solved,solve_ms,recovery_ms,ns,nr=nil,0,0,0,0
     repeat
         local start=clock_ms()
-        local sol,err=Frame.solve(case.model)
+        local sol,err
+        if case.preset then sol,err=ContinuousPreset.solve(case.preset) else sol,err=Frame.solve(case.model) end
+        if not sol and err=='model too large for handheld' then return {name=case.name,guard=err} end
         if not sol then error(case.name..': '..tostring(err),0) end
         solve_ms=solve_ms+(clock_ms()-start)%4294967296
         solved=sol;ns=ns+1
@@ -838,14 +1111,17 @@ function Bench.measure(index,step)
         nr=nr+1
         if step then step() end
     until (nr>=3 and recovery_ms>=200) or nr>=4096
-    return {name=case.name,nodes=#solved.nodes,dofs=solved.ndof,free=#solved.free,
+    local frame=solved.bases and solved.bases[1] or solved
+    return {name=case.name,nodes=#frame.nodes,dofs=frame.ndof,free=#frame.free,
         solve_ms=solve_ms/ns,recovery_ms=recovery_ms/nr,Nsolve=ns,Nrecover=nr,checksum=checksum}
 end
 function Bench.pc()
     for i=1,#Bench.cases do
         local r=Bench.measure(i)
+        if r.guard then print('BENCH | '..r.name..' | '..r.guard) else
         print(string.format('BENCH | %s | %d | %d | %d | %.6f | %.6f | %d | %d',
             r.name,r.nodes,r.dofs,r.free,r.solve_ms,r.recovery_ms,r.Nsolve,r.Nrecover))
+        end
     end
 end
 function Bench.start()
@@ -853,7 +1129,7 @@ function Bench.start()
     Bench.rows={};Bench.current=1;Bench.done=false;Bench.error=nil
     Bench.task=coroutine.create(function()
         for i=1,#Bench.cases do
-            Bench.current=i
+            Bench.current=i;Bench.page=math.floor((i-1)/6)
             Bench.rows[i]=Bench.measure(i,coroutine.yield)
         end
         Bench.done=true
@@ -875,11 +1151,14 @@ function on.paint(gc)
     text('BXBENCH '..Bench.version..' '..string.sub(Bench.sha,1,8),4,3)
     text(Bench.clock_name..' / ms per operation',4,17)
     text('case',4,35);text('n/dof',105,35);text('solve',160,35);text('101 at',235,35)
-    for i,case in ipairs(Bench.cases) do
-        local y=51+(i-1)*23
+    local first=(Bench.page or 0)*6+1
+    for i=first,math.min(first+5,#Bench.cases) do
+        local case=Bench.cases[i]
+        local y=51+(i-first)*23
         text(case.name,4,y)
         local r=Bench.rows[i]
-        if r then
+        if r and r.guard then text('guard 20 nodes',160,y)
+        elseif r then
             text(r.nodes..'/'..r.dofs,105,y)
             text(string.format('%.2f',r.solve_ms),160,y)
             text(string.format('%.2f',r.recovery_ms),235,y)
@@ -887,7 +1166,15 @@ function on.paint(gc)
         else text(i==Bench.current and 'running...' or '--',160,y) end
     end
     if Bench.error then text(string.sub(Bench.error,1,60),4,192)
-    else text(Bench.done and 'Done. N>=3; target >=200 ms/batch.' or 'Measuring; painting is not timed.',4,192) end
+    else text(Bench.done and 'Done. Arrows: page. env=full envelope.' or 'Measuring; painting is not timed.',4,192) end
+end
+function on.arrowRight()
+    Bench.page=((Bench.page or 0)+1)%math.ceil(#Bench.cases/6)
+    platform.window:invalidate()
+end
+function on.arrowLeft()
+    Bench.page=((Bench.page or 0)+math.ceil(#Bench.cases/6)-1)%math.ceil(#Bench.cases/6)
+    platform.window:invalidate()
 end
 if platform and platform.window and timer and timer.start then Bench.start() end
 return Bench

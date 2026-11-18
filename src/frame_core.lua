@@ -15,7 +15,7 @@
 -- Springs act in global DOFs; reactions include their force -k*u.
 -- Global/projected member loads and axial thermal expansion are outside P1C.
 -- solve/assemble return nil,message on failure; at/extrema reject bad queries.
--- moment_extrema returns min, s_min, max, s_max; deflection_extrema w, s.
+-- moment_extrema and deflection_extrema return min, s_min, max, s_max.
 local Frame = {}
 
 local PIVOT_TOL = 1e-12 -- |pivot| / original row maximum, after scaled pivoting.
@@ -737,16 +737,129 @@ function Frame.moment_extrema(sol,member)
 end
 function Frame.deflection_extrema(sol,member)
     local m=member_result(sol,member)
-    local best,xbest=0,0
+    local lo,xlo,hi,xhi=math.huge,0,-math.huge,0
     for _,span in ipairs(m.elements[1].spans) do
         local function candidate(x)
             local _,_,w=span_value(span,x)
-            if math.abs(w)>math.abs(best) then best=w;xbest=span.x0+x end
+            if w<lo then lo=w;xlo=span.x0+x end
+            if w>hi then hi=w;xhi=span.x0+x end
         end
         candidate(0);candidate(span.L)
         roots_on_span(span,function(x) local _,_,_,theta=span_value(span,x);return theta end,candidate)
     end
-    return best,xbest
+    return lo,xlo,hi,xhi
+end
+
+-- Superposition of already recovered solutions; no assembly or linear solve.
+function Frame.combine(solutions,factors)
+    local function incompatible(reason) error('incompatible solutions: '..reason,0) end
+    local function copy(value,memo)
+        if type(value)~='table' then return value end
+        memo=memo or {}
+        if memo[value] then return memo[value] end
+        local out={};memo[value]=out
+        for k,v in pairs(value) do out[k]=copy(v,memo) end
+        return out
+    end
+    local function same(a,b)
+        if type(a)~=type(b) then return false end
+        if type(a)~='table' then return a==b end
+        for k,v in pairs(a) do if not same(v,b[k]) then return false end end
+        for k in pairs(b) do if a[k]==nil then return false end end
+        return true
+    end
+    local function combine()
+        if type(solutions)~='table' or type(factors)~='table' or #solutions==0 or #solutions~=#factors then
+            incompatible('solution/factor counts')
+        end
+        local base=solutions[1]
+        if type(base)~='table' or not base.u or not base.reactions or not base.members then incompatible('not a solved model') end
+        for k=1,#solutions do
+            local s=solutions[k]
+            if not finite(factors[k]) then incompatible('non-finite factor') end
+            if type(s)~='table' or not s.u or not s.reactions or not s.members then incompatible('not a solved model') end
+            if not same(base.nodes,s.nodes) then incompatible('nodes') end
+            for _,name in ipairs{'ndof','fixed','prescribed','springs','free','inactive_rotations'} do
+                if not same(base[name],s[name]) then incompatible(name) end
+            end
+            if #base.members~=#s.members then incompatible('member count') end
+            for i,m in ipairs(base.members) do
+                local other=s.members[i]
+                for _,key in ipairs{'i','j','L','c','s','EI','EA','hinge_i','hinge_j','alphaT','h','cuts'} do
+                    if not same(m[key],other[key]) then incompatible('member '..i..' '..key) end
+                end
+                local a,b=m.elements[1],other.elements[1]
+                if not a.spans or not b.spans or #a.spans~=#b.spans then incompatible('recovery spans') end
+                for j,span in ipairs(a.spans) do
+                    for _,key in ipairs{'x0','x1','L','EI'} do
+                        if span[key]~=b.spans[j][key] then incompatible('recovery '..key) end
+                    end
+                end
+            end
+        end
+        local out=copy(base)
+        if #solutions==1 and factors[1]==1 then return out end
+        local function sum(get)
+            local value,low=0,0
+            for k,s in ipairs(solutions) do value,low=compensated_add(value,low,factors[k]*get(s)) end
+            value=value+low
+            if not finite(value) then incompatible('non-finite combined response') end
+            return value
+        end
+        local function vector_sum(target,get)
+            for j=1,#target do
+                target[j]=sum(function(s) return get(s)[j] end)
+            end
+            if target.correction then
+                for j=1,#target.correction do
+                    target.correction[j]=sum(function(s) return get(s).correction[j] end)
+                end
+            end
+        end
+        vector_sum(out.u,function(s) return s.u end)
+        vector_sum(out.F,function(s) return s.F end)
+        for d in pairs(out.prescribed) do out.prescribed[d]=sum(function(s) return s.prescribed[d] end) end
+        for _,key in ipairs{'Fx','Fy','Mz'} do out.applied[key]=sum(function(s) return s.applied[key] end) end
+        out.applied.scale=0
+        for k,s in ipairs(solutions) do out.applied.scale=out.applied.scale+math.abs(factors[k])*s.applied.scale end
+        for i,r in ipairs(out.reactions) do
+            for _,key in ipairs{'Rx','Ry','Mz'} do r[key]=sum(function(s) return s.reactions[i][key] end) end
+        end
+        for i,m in ipairs(out.members) do
+            m.q=sum(function(s) return s.members[i].q end)
+            m.kappa=sum(function(s) return s.members[i].kappa end)
+            m.points={};m.moments={};m.distributed={};m.point_positions={}
+            for k,s in ipairs(solutions) do
+                local source=s.members[i]
+                for x in pairs(source.point_positions) do m.point_positions[x]=true end
+                for _,list in ipairs{{'points','P'},{'moments','M'},{'distributed','q1','q2'}} do
+                    for _,load in ipairs(source[list[1]]) do
+                        local item=copy(load)
+                        for j=2,#list do item[list[j]]=item[list[j]]*factors[k] end
+                        m[list[1]][#m[list[1]]+1]=item
+                    end
+                end
+            end
+            local el=m.elements[1]
+            for _,key in ipairs{'u','f','f_correction','fe','full_fe'} do
+                vector_sum(el[key],function(s) return s.members[i].elements[1][key] end)
+            end
+            el.N=sum(function(s) return s.members[i].elements[1].N end)
+            for j,span in ipairs(el.spans) do
+                for _,key in ipairs{'V','M','w','theta','qa','g','kappa'} do
+                    span[key]=sum(function(s) return s.members[i].elements[1].spans[j][key] end)
+                end
+            end
+        end
+        -- Source diagnostics certify their own solves, not this superposition.
+        out.checks=nil
+        return out
+    end
+    local ok,result=pcall(combine)
+    if ok then return result end
+    local message=tostring(result)
+    if not string.find(message,'incompatible solutions: ',1,true) then message='incompatible solutions: malformed solution' end
+    return nil,message
 end
 
 return Frame

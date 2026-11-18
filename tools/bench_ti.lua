@@ -33,8 +33,23 @@ Bench.cases={{name='simple q+P',model=continuous(1)},
              {name='synthetic 20',model=continuous(19,true)},
              {name='synthetic 40',model=continuous(39,true)},
              {name='synthetic 60',model=continuous(59,true)}}
+-- P5A complete envelopes, including n+1 bases, all ULS/SLS patterns and extrema.
+for n=2,5 do
+    local lengths={4,6,5,3,7}
+    local spans={};for i=1,n do spans[i]=lengths[i] end
+    Bench.cases[#Bench.cases+1]={name='continua '..n..' env',
+        preset={spans=spans,left='PIN',right='PIN',g=8,q=5,EI=20000}}
+end
 local function recover(sol)
     local checksum=0
+    if sol.bases then
+        local L=sol.supports[#sol.supports].position
+        for sample=0,100 do
+            local v=sol.envelope_at(L*sample/100)
+            checksum=checksum+v.Mmax+v.Vmin
+        end
+        return checksum
+    end
     -- Exactly 101 queries across user members; include physical end limits.
     for sample=0,100 do
         local member=sample%#sol.members+1
@@ -49,7 +64,9 @@ function Bench.measure(index,step)
     local solved,solve_ms,recovery_ms,ns,nr=nil,0,0,0,0
     repeat
         local start=clock_ms()
-        local sol,err=Frame.solve(case.model)
+        local sol,err
+        if case.preset then sol,err=ContinuousPreset.solve(case.preset) else sol,err=Frame.solve(case.model) end
+        if not sol and err=='model too large for handheld' then return {name=case.name,guard=err} end
         if not sol then error(case.name..': '..tostring(err),0) end
         solve_ms=solve_ms+(clock_ms()-start)%4294967296
         solved=sol;ns=ns+1
@@ -63,14 +80,17 @@ function Bench.measure(index,step)
         nr=nr+1
         if step then step() end
     until (nr>=3 and recovery_ms>=200) or nr>=4096
-    return {name=case.name,nodes=#solved.nodes,dofs=solved.ndof,free=#solved.free,
+    local frame=solved.bases and solved.bases[1] or solved
+    return {name=case.name,nodes=#frame.nodes,dofs=frame.ndof,free=#frame.free,
         solve_ms=solve_ms/ns,recovery_ms=recovery_ms/nr,Nsolve=ns,Nrecover=nr,checksum=checksum}
 end
 function Bench.pc()
     for i=1,#Bench.cases do
         local r=Bench.measure(i)
+        if r.guard then print('BENCH | '..r.name..' | '..r.guard) else
         print(string.format('BENCH | %s | %d | %d | %d | %.6f | %.6f | %d | %d',
             r.name,r.nodes,r.dofs,r.free,r.solve_ms,r.recovery_ms,r.Nsolve,r.Nrecover))
+        end
     end
 end
 function Bench.start()
@@ -78,7 +98,7 @@ function Bench.start()
     Bench.rows={};Bench.current=1;Bench.done=false;Bench.error=nil
     Bench.task=coroutine.create(function()
         for i=1,#Bench.cases do
-            Bench.current=i
+            Bench.current=i;Bench.page=math.floor((i-1)/6)
             Bench.rows[i]=Bench.measure(i,coroutine.yield)
         end
         Bench.done=true
@@ -100,11 +120,14 @@ function on.paint(gc)
     text('BXBENCH '..Bench.version..' '..string.sub(Bench.sha,1,8),4,3)
     text(Bench.clock_name..' / ms per operation',4,17)
     text('case',4,35);text('n/dof',105,35);text('solve',160,35);text('101 at',235,35)
-    for i,case in ipairs(Bench.cases) do
-        local y=51+(i-1)*23
+    local first=(Bench.page or 0)*6+1
+    for i=first,math.min(first+5,#Bench.cases) do
+        local case=Bench.cases[i]
+        local y=51+(i-first)*23
         text(case.name,4,y)
         local r=Bench.rows[i]
-        if r then
+        if r and r.guard then text('guard 20 nodes',160,y)
+        elseif r then
             text(r.nodes..'/'..r.dofs,105,y)
             text(string.format('%.2f',r.solve_ms),160,y)
             text(string.format('%.2f',r.recovery_ms),235,y)
@@ -112,7 +135,15 @@ function on.paint(gc)
         else text(i==Bench.current and 'running...' or '--',160,y) end
     end
     if Bench.error then text(string.sub(Bench.error,1,60),4,192)
-    else text(Bench.done and 'Done. N>=3; target >=200 ms/batch.' or 'Measuring; painting is not timed.',4,192) end
+    else text(Bench.done and 'Done. Arrows: page. env=full envelope.' or 'Measuring; painting is not timed.',4,192) end
+end
+function on.arrowRight()
+    Bench.page=((Bench.page or 0)+1)%math.ceil(#Bench.cases/6)
+    platform.window:invalidate()
+end
+function on.arrowLeft()
+    Bench.page=((Bench.page or 0)+math.ceil(#Bench.cases/6)-1)%math.ceil(#Bench.cases/6)
+    platform.window:invalidate()
 end
 if platform and platform.window and timer and timer.start then Bench.start() end
 return Bench

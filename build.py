@@ -18,4 +18,4 @@ for name, marker, localname in [
 out='-- BeamCX v0.4.0 (generated).\n'+'\n'.join(parts)
 (root/'BeamCX.lua').write_text(out, encoding='utf-8')
 print(f'Wrote BeamCX.lua: {len(out.encode()):,} bytes')
-print('Convert to .tns with: ~/Luna/luna BeamCX.lua BeamCX.tns')
+print('Package with: python3 tools/package.py')

@@ -28,7 +28,7 @@ The application now uses one numerical engine: `BeamPreset → Frame.solve`, fol
 Requires **Python 3**, **Luna** and the TI-Nspire file-transfer tool of your choice. `liblua5.4-0` is needed only for the local Python-based test harness.
 
 ```bash
-sudo apt install build-essential zlib1g-dev python3 liblua5.4-0 lua5.1
+sudo apt install build-essential zlib1g-dev python3 liblua5.4-0 lua5.1 python3-sympy
 
 # Once only, if Luna is not already installed:
 git clone https://github.com/ndless-nspire/Luna.git ~/Luna
@@ -74,7 +74,7 @@ Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.7
 
 **v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
 
-**v0.4.0 hardware acceptance is pending.** Transfer the new `BeamCX.tns` and verify all four systems, M/V/w diagrams and cursor, section changes, and all eight CAS exports on the original CX CAS. A successful desktop test/build/package does not establish physical validation. See [P2B validation report](VALIDATION_P2B.md).
+**v0.4.0 is validated on the CX CAS by the owner.** P5A leaves that application unchanged; continuous-beam UI and hardware acceptance belong to P5B. See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
 
 ## Keys
 
@@ -146,6 +146,7 @@ BeamCX/
 ├── src/
 │   ├── frame_core.lua      # Single productive numerical engine and recovery
 │   ├── beam_preset.lua     # Four presets; downward input sign boundary; CAS summary
+│   ├── continuous_preset.lua # P5A calculation only: basis cases and envelopes
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/
@@ -159,6 +160,8 @@ BeamCX/
 │   ├── test_beam_preset.py # Generated bundle vs frozen golden/adjudication
 │   ├── test_productive_route.py # UI → Frame instrumentation, cursors, RESOLVED
 │   ├── test_frame_core.py  # 394 original Frame oracles and retained regressions
+│   ├── test_continuous_preset.py # Rational reference, patterns, combine, uplift
+│   ├── continuous_reference.py # Independent SymPy rotation-only stiffness
 │   ├── run_suites.py       # Complete suite under liblua5.4 or a Lua CLI
 │   ├── test_dc_reference.py # Frame vs frozen dc Euler reference
 │   ├── fixtures/beam_v033_golden.json # Frozen v0.3.3 inputs and outputs
@@ -181,20 +184,20 @@ BeamCX/
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **11 suites pass under Lua 5.1.5 and Lua 5.4.7**. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Limit changes and repaint do not solve again. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `tests/run_suites.py --lua lua5.1` executes the same Lua chunks with the target interpreter; `quick_check.lua` also runs directly. All **12 suites pass under Lua 5.1.5 and Lua 5.4.7** (the existing 11 plus P5A). The P5A test-only reference requires SymPy; the numerical application has no Python dependency. This includes the unchanged 394 Frame oracles, frozen 2,042-case equivalence/adjudication suite loaded through the generated application, all four P0/eight-CAS witnesses, and a real UI recalculation instrumenting `Frame.solve`. The five RESOLVED cases also succeed via UI restore and export. Limit changes and repaint do not solve again. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
 
-## Benchmark (P2A)
+## Benchmark (P2A / P5A)
 
 Build and package the independent benchmark with official Luna `a9924a9`:
 
 ```bash
 python3 tools/build_bench.py
 python3 tools/package.py --bench
-# Optional PC CPU reference, using the exact same six models:
+# Optional PC CPU reference, including complete continuous-beam envelopes:
 lua5.1 -e "dofile('bench.lua').pc()"
 ```
 
-Transfer **BXBENCH.tns** under that plain name into the calculator's root folder and open it. It starts automatically and shows Frame's version/hash, nodes/GDL, solution time and time for 101 recovery calls. Each phase uses at least three repetitions and targets at least 200 ms accumulated measured time (maximum 4096 repetitions). Measurement yields between operations so the screen can update. Painting is excluded. The clock is TI's [`timer.getMilliSecCounter()`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/timerlib/getmilliseccounter.HTML), available since API 1.0; 32-bit rollover is handled. PC reference runs use `os.clock` CPU time. The reference measurements below were obtained on the original TI-Nspire CX CAS. They measure the general solver and do not guarantee application UI timings. This build does not change `BeamCX.lua`.
+Transfer **BXBENCH.tns** under that plain name into the calculator's root folder and open it. It starts automatically and shows Frame's version/hash, nodes/GDL, solution time and time for 101 recovery calls. The six original model rows are retained; the 40/60-node rows now report the existing 20-node guard and measurement continues. Four added rows, `continua 2 env` through `continua 5 env`, time the complete calculation (bases, ULS/SLS patterns and extrema); their recovery column measures 101 exact envelope queries. Arrow keys switch between the two result pages. Each phase uses at least three repetitions and targets at least 200 ms accumulated measured time (maximum 4096 repetitions). Measurement yields between operations so the screen can update. Painting is excluded. The clock is TI's [`timer.getMilliSecCounter()`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/timerlib/getmilliseccounter.HTML), available since API 1.0; 32-bit rollover is handled. PC reference runs use `os.clock` CPU time. The reference measurements below were obtained on the original TI-Nspire CX CAS. They measure the general solver and do not guarantee application UI timings. This build does not change `BeamCX.lua`.
 
 Existing BXBENCH solve-time references (P2A closed):
 
@@ -219,6 +222,16 @@ python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc check
 ```
 
 The retained P2A comparison rules distinguish **2,009 ordinary equivalent cases, two independently adjudicated cases, five RESOLVED legacy failures and 26 invalid inputs**. P2B consumes these fixtures without regenerating them or changing the numerical authority. Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
+
+## v0.5 P5A — continuous-beam calculation only
+
+The standalone `ContinuousPreset` handles 2–5 spans (provisional `MAX_SPANS=5`), PIN/FIX ends, continuous rotations over intermediate vertical supports, one EI, and full-span uniform g/q loads. Supply self-weight once as part of g. No point loads, continuous-beam selector, persistence or CAS namespace are added to the application. `BeamCX.lua` and `BeamCX.tns` remain the validated v0.4.0 artifacts.
+
+`ContinuousPreset.model(p, 'G' or span_index)` creates the permanent and individual variable-load cases; `solve(p)` uses exactly n+1 Frame solves. Its result exposes `envelope_at(global_x, side)`, span algebraic `Mmax`/positive `Mplus`, signed downward/upward characteristic deflection records and the governing L/250 or L/300 comparison, support Mmin/Rmax/Rmin, global absolute shear and a semantic summary. Records include local/global position, load pattern text and the governing global gammaG where applicable. All 2^n patterns are considered. ULS uses both global gammaG choices; characteristic deflection uses unit factors and is labelled **w car.** Defaults are gammaG_sup=1.35, gammaG_inf=1 and gammaQ=1.5; their convention is explicitly **OPEN**, to be checked against EN 1990 Annex A1 and the applicable NA. No normative compliance is claimed.
+
+`Frame.combine(solutions, factors)` superposes compatible recovered results without assembly/solve and without changing its operands. Geometry, connectivity, EI/EA, supports, springs, releases and recovery cuts must match. Incompatibilities return `nil, 'incompatible solutions: ...'`. Per the approved API change, standalone `Frame.deflection_extrema` now returns `wmin, xmin, wmax, xmax` in one search; BeamPreset selects the larger absolute value, preserving its API. The frozen application bundle retains its existing interface until P5B.
+
+P5A tests use independent rational SymPy stiffness (rotational DOFs only), brute force over every pattern, direct Frame load sums, 101 points/span, and separate uplift/downward extrema. [The report](VALIDATION_P5A.md) gives the final API, oracle errors, PC timings and functions awaiting an application caller in P5B. Timing on the CX and the final MAX_SPANS/deferred-calculation choice remain with P5B.
 
 ## Data references
 

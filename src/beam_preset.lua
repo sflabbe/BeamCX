@@ -42,7 +42,9 @@ function BeamPreset.moment_extrema(sol)
             maximum={value=hi,position=math.max(0,math.min(L,xhi))}}
 end
 function BeamPreset.deflection_extrema(sol)
-    local w,x=Core.deflection_extrema(sol.frame,1)
+    local lo,xlo,hi,xhi=Core.deflection_extrema(sol.frame,1)
+    local w,x=lo,xlo
+    if math.abs(hi)>math.abs(lo) then w,x=hi,xhi end
     return {value=w,absolute=math.abs(w),position=math.max(0,math.min(sol.parameters.L,x))}
 end
 function BeamPreset.deflection_check(sol,limit,lref_factor)

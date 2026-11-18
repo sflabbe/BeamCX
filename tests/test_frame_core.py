@@ -23,6 +23,11 @@ end
 '''
 script = 'local Frame,assembly_snapshot=assert((loadstring or load)(' + json.dumps(snapshot_source) + '))()\n' + r'''
 print('RUNTIME '.._VERSION)
+local function absolute_deflection(sol,member)
+    local lo,xlo,hi,xhi=Frame.deflection_extrema(sol,member)
+    if math.abs(hi)>math.abs(lo) then return hi,xhi end
+    return lo,xlo
+end
 local rows=0
 local max_equilibrium,max_residual=0,0
 local function eq(id,got,want,tol)
@@ -129,7 +134,7 @@ end
 local sol=solve(beam(1,{true}))
 eq('1 A',sol.reactions[1].Ry,30);eq('1 B',sol.reactions[2].Ry,30)
 eq('1 M(3)',Frame.at(sol,1,3).M,45);eq('1 w(3)',Frame.at(sol,1,3).w,-0.016875)
-local w,x=Frame.deflection_extrema(sol,1)
+local w,x=absolute_deflection(sol,1)
 eq('1 w extreme',w,-0.016875);eq('1 xw',x,3)
 sol=solve(beam(1,nil,2))
 local l,r=Frame.at(sol,1,2,'left'),Frame.at(sol,1,2,'right')
@@ -143,7 +148,7 @@ assert(not pcall(Frame.at,sol,1,2))
 local lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
 eq('2 Mmax',hi,16);eq('2 xMmax',xhi,2)
 -- Exact deflection maximum for off-centre point: x=L-sqrt((L^2-a^2)/3).
-w,x=Frame.deflection_extrema(sol,1)
+w,x=absolute_deflection(sol,1)
 local xp=6-math.sqrt(32/3)
 eq('2 xw',x,xp)
 eq('2 w extreme',w,-12*2*(6-xp)*(36-4-(6-xp)^2)/(6*6*1e4))
@@ -151,7 +156,7 @@ for _,kind in ipairs{'q','P'} do
     sol=solve(beam(1,kind=='q' and {true} or nil,kind=='P' and 6 or nil,'cantilever'))
     eq('9 '..kind..' w(L)',Frame.at(sol,1,6,kind=='P' and 'left' or nil).w,kind=='q' and -0.162 or -0.0864)
     eq('9 '..kind..' M(0)',Frame.at(sol,1,0).M,kind=='q' and -180 or -72)
-    w,x=Frame.deflection_extrema(sol,1)
+    w,x=absolute_deflection(sol,1)
     eq('9 '..kind..' w extreme',w,kind=='q' and -0.162 or -0.0864);eq('9 '..kind..' xw',x,6)
 end
 sol=solve(beam(1,{true},nil,'fixed'))
@@ -266,7 +271,7 @@ m=beam(1,{true});m.members[1].i=2;m.members[1].j=1;m.member_loads[1].q=10
 sol=solve(m);eq('reversed global Ry',sol.reactions[1].Ry,30)
 eq('reversed local w',Frame.at(sol,1,3).w,.016875)
 -- All supports prescribed / unloaded zero response.
-sol=solve(beam(1,nil,nil,'fixed'));w,x=Frame.deflection_extrema(sol,1);eq('zero w',w,0)
+sol=solve(beam(1,nil,nil,'fixed'));w,x=absolute_deflection(sol,1);eq('zero w',w,0)
 -- Performance: three spans with interior points, then the 20-model-node CX guard.
 m=beam(3,{true,true,true})
 for i=1,3 do m.member_loads[#m.member_loads+1]={member=i,type='point',a=2,P=-12} end
@@ -307,7 +312,7 @@ eq('3 Mmax',hi,360/(9*math.sqrt(3)));eq('3 xMmax',xhi,6/math.sqrt(3))
 -- EI*w/(q0*L^4)=-t^5/120+t^3/36-7t/360;
 -- w'=0 gives t=sqrt(1-sqrt(8/15)).
 local tw=math.sqrt(1-math.sqrt(8/15))
-w,x=Frame.deflection_extrema(sol,1)
+w,x=absolute_deflection(sol,1)
 eq('3 wmin',w,10*6^4/1e4*(-tw^5/120+tw^3/36-7*tw/360))
 eq('3 xwmin',x,6*tw)
 local triangular=sol
@@ -316,7 +321,7 @@ m.member_loads[2]={member=1,type='dist',a=3,b=6,q1=-10,q2=0}
 sol=solve(m)
 eq('4 A',sol.reactions[1].Ry,15);eq('4 B',sol.reactions[2].Ry,15)
 eq('4 M(3)',Frame.at(sol,1,3).M,30);eq('4 w(3)',Frame.at(sol,1,3).w,-.0108)
-w,x=Frame.deflection_extrema(sol,1)
+w,x=absolute_deflection(sol,1)
 eq('4 wmin',w,-.0108);eq('4 xwmin',x,3)
 sol=solve(linear_beam(-10,-10,nil,0,2.5))
 local RA=10*2.5*(6-2.5/2)/6

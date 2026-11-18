@@ -212,9 +212,9 @@ for id=24,28 do
     else eq('28 |base|',math.abs(sol.reactions[1].Mz),80/7,1e-4) end
 end
 -- P1A contract boundaries and mechanics not covered by the scalar oracles.
-for _,kind in ipairs{'dT','unknown'} do
+for _,kind in ipairs{'axial','unknown'} do
     m=beam(1);m.member_loads={{member=1,type=kind}}
-    fail(m,'unsupported member load type')
+    assert(fail(m,'unsupported member load type: '..kind)=='unsupported member load type: '..kind)
 end
 for _,field in ipairs{'releases','springs','settlements','dT'} do
     m=beam(1);m.members[1][field]={};fail(m,'unsupported member field')
@@ -626,6 +626,232 @@ for _,kind in ipairs{'P1A','P1B'} do
         kind,#sol.nodes,sol.ndof,#sol.free,elapsed,sol.checks.compatibility_relative))
 end
 print('PASS P1B.1: two HP fixtures, close loads, model-only DOFs, endpoint tolerance and compatibility')
+'''
+
+
+script += r'''
+-- P1C: all 265 preceding oracle rows retain their expected values.
+assert(rows==265)
+local p1c_start=rows
+local function checked(model)
+    local s=solve(model)
+    assert(s.checks.compatibility_relative<=1e-8)
+    assert(s.ndof==3*#model.nodes)
+    return s
+end
+local function gerber(right_release)
+    return {nodes={{x=0,y=0},{x=4,y=0},{x=10,y=0}},
+        members={{i=1,j=2,EA=1e8,EI=1e4,hinge_j=not right_release},
+                 {i=2,j=3,EA=1e8,EI=1e4,hinge_i=right_release}},
+        supports={{node=1,ux=true,uy=true,rz=true},{node=3,uy=true}},
+        member_loads={{member=1,type='udl',q=-10},{member=2,type='udl',q=-10}}}
+end
+local reference_gerber=checked(gerber(false))
+for _,right_release in ipairs{false,true} do
+    local id=right_release and '20b' or '20'
+    sol=checked(gerber(right_release))
+    eq('P1C '..id..' M(4 left)',Frame.at(sol,1,4).M,0)
+    eq('P1C '..id..' M(4 right)',Frame.at(sol,2,0).M,0)
+    eq('P1C '..id..' Ry(10)',sol.reactions[3].Ry,30)
+    eq('P1C '..id..' M(0)',Frame.at(sol,1,0).M,-200)
+    eq('P1C '..id..' Ry(0)',sol.reactions[1].Ry,70)
+    if right_release then
+        for member,L in ipairs{4,6} do for k=1,5 do
+            local s=L*k/6
+            eq('P1C 20b w member '..member..' s='..s,Frame.at(sol,member,s).w,Frame.at(reference_gerber,member,s).w)
+        end end
+    end
+end
+m={nodes={{x=0,y=0},{x=3,y=0},{x=6,y=0}},
+   members={{i=1,j=2,EI=1e4,EA=1e8,hinge_j=true},{i=2,j=3,EI=1e4,EA=1e8,hinge_i=true}},
+   supports={{node=1,ux=true,uy=true},{node=3,uy=true}},member_loads={{member=1,type='udl',q=-10}}}
+fail(m,'mechanism') -- 29: genuine internal hinge mechanism, not an unused rz.
+local function three_hinged()
+    return {nodes={{x=0,y=0},{x=0,y=4},{x=3,y=4},{x=6,y=4},{x=6,y=0}},
+        members={{i=1,j=2,EI=1e4,EA=1e8},{i=2,j=3,EI=15000,EA=1e8,hinge_j=true},
+                 {i=3,j=4,EI=15000,EA=1e8,hinge_i=true},{i=5,j=4,EI=1e4,EA=1e8}},
+        supports={{node=1,ux=true,uy=true},{node=5,ux=true,uy=true}},
+        member_loads={{member=2,type='udl',q=-10},{member=3,type='udl',q=-10}}}
+end
+m=three_hinged();sol=checked(m)
+eq('P1C 30 |H left|',math.abs(sol.reactions[1].Rx),11.25,1e-4)
+eq('P1C 30 |H right|',math.abs(sol.reactions[5].Rx),11.25,1e-4)
+eq('P1C 30 M key left',Frame.at(sol,2,3).M,0)
+eq('P1C 30 M key right',Frame.at(sol,3,0).M,0)
+eq('P1C 30 |corner left|',math.abs(Frame.at(sol,2,0).M),45,1e-4)
+eq('P1C 30 |corner right|',math.abs(Frame.at(sol,3,3).M),45,1e-4)
+assert(sol.inactive_rotations[1]==3 and sol.u[9]==0)
+m.nodal_loads={{node=3,M=5}}
+err=fail(m,'mechanism');assert(string.find(err,'node 3',1,true)) -- 30b.
+local function pendular(vertical)
+    local m=portal(false)
+    m.supports[1].rz=true
+    m.members[2].hinge_i=true;m.members[2].hinge_j=true
+    m.members[3].hinge_i=true;m.members[3].hinge_j=true
+    m.nodal_loads=vertical and {{node=3,Fy=-20}} or {{node=2,Fx=10}}
+    return m
+end
+sol=checked(pendular(false))
+eq('P1C 31 |base left|',math.abs(sol.reactions[1].Mz),40,1e-4)
+for _,member in ipairs{2,3} do for _,s in ipairs{0,2,4} do
+    eq('P1C 31 M member '..member..' s='..s,Frame.at(sol,member,s).M,0)
+    eq('P1C 31 V member '..member..' s='..s,Frame.at(sol,member,s).V,0)
+end end
+assert(sol.u[9]==0 and sol.u[12]==0)
+sol=checked(pendular(true))
+eq('P1C 31b N pendular',Frame.at(sol,3,2).N,-20)
+eq('P1C 31b M pendular',Frame.at(sol,3,2).M,0)
+m=beam(1,{true},nil,'fixed');m.members[1].hinge_i=true;m.members[1].hinge_j=true
+sol=checked(m)
+eq('P1C 32 M(0)',Frame.at(sol,1,0).M,0);eq('P1C 32 M(L)',Frame.at(sol,1,6).M,0)
+eq('P1C 32 M(3)',Frame.at(sol,1,3).M,45);eq('P1C 32 w(3)',Frame.at(sol,1,3).w,-.016875)
+eq('P1C 32 theta member i',sol.elements[1].u[3],-.009)
+eq('P1C 32 theta member j',sol.elements[1].u[6],.009)
+assert(sol.elements[1].f[3]==0 and sol.elements[1].f[6]==0 and sol.u[3]==0 and sol.u[6]==0)
+-- 21: midspan vertical spring; reaction sign is force ON the structure.
+m={nodes={{x=0,y=0},{x=3,y=0},{x=6,y=0}},
+   members={{i=1,j=2,EI=1e4,EA=1e8},{i=2,j=3,EI=1e4,EA=1e8}},
+   supports={{node=1,ux=true,uy=true},{node=3,uy=true},{node=2,ky=5000}},
+   member_loads={{member=1,type='udl',q=-10},{member=2,type='udl',q=-10}}}
+sol=checked(m)
+local spring_R=.016875/(1/5000+6^3/(48*1e4))
+eq('P1C 21 spring Ry',sol.reactions[2].Ry,spring_R)
+eq('P1C 21 A',sol.reactions[1].Ry,(60-spring_R)/2)
+eq('P1C 21 B',sol.reactions[3].Ry,(60-spring_R)/2)
+eq('P1C 21 sum Ry',sol.reactions[1].Ry+sol.reactions[2].Ry+sol.reactions[3].Ry,60)
+eq('P1C 21 spring displacement',sol.u[5],-spring_R/5000)
+for _,kr in ipairs{5000,1e12,1e-6} do
+    m=beam(1,{true});m.supports[1].kr=kr
+    sol=checked(m)
+    local moment=Frame.at(sol,1,0).M
+    if kr==5000 then
+        eq('P1C 21b M(0)',moment,-22.5)
+        eq('P1C 21b spring Mz',sol.reactions[1].Mz,22.5)
+    elseif kr==1e12 then eq('P1C 21c stiff M(0)',moment,-45,1e-6)
+    else eq('P1C 21c soft M(0)',moment,0,1e-6);assert(math.abs(moment)<1e-6) end
+end
+-- Settlements: positive Delta below denotes the magnitude of dy=-Delta.
+m=beam(1,nil,nil,'fixed');m.supports[2].dy=-.01
+sol=checked(m)
+eq('P1C 11 M(0)',Frame.at(sol,1,0).M,-6*1e4*.01/36)
+eq('P1C 11 M(L)',Frame.at(sol,1,6).M,6*1e4*.01/36)
+eq('P1C 11 Ry i',sol.reactions[1].Ry,12*1e4*.01/216)
+eq('P1C 11 Ry j',sol.reactions[2].Ry,-12*1e4*.01/216)
+eq('P1C 11 w(L)',Frame.at(sol,1,6).w,-.01)
+m=beam(1,nil,nil,'propped');m.supports[2].dy=-.01
+sol=checked(m)
+eq('P1C 13s M(0)',Frame.at(sol,1,0).M,-3*1e4*.01/36)
+eq('P1C 13s Ry i',sol.reactions[1].Ry,3*1e4*.01/216)
+eq('P1C 13s Ry j',sol.reactions[2].Ry,-3*1e4*.01/216)
+m=beam(1);m.supports[2].dy=-.01
+sol=checked(m)
+eq('P1C 11b Ry i',sol.reactions[1].Ry,0);eq('P1C 11b Ry j',sol.reactions[2].Ry,0)
+for _,s in ipairs{0,1.5,3,4.5,6} do
+    eq('P1C 11b M s='..s,Frame.at(sol,1,s).M,0)
+    eq('P1C 11b w s='..s,Frame.at(sol,1,s).w,-.01*s/6)
+end
+local function thermal(support,q,hinges)
+    local m=beam(1,q and {true} or nil,nil,support)
+    m.members[1].alphaT=1.2e-5;m.members[1].h=.3
+    m.members[1].hinge_i=hinges;m.members[1].hinge_j=hinges
+    m.member_loads[#m.member_loads+1]={member=1,type='dT',dT=20}
+    return m
+end
+local temp_pin=checked(thermal())
+eq('P1C 8 thermal w(3)',Frame.at(temp_pin,1,3).w,.0036)
+eq('P1C 8 thermal Ry i',temp_pin.reactions[1].Ry,0)
+eq('P1C 8 thermal Ry j',temp_pin.reactions[2].Ry,0)
+for _,s in ipairs{0,1.5,3,4.5,6} do eq('P1C 8 thermal M s='..s,Frame.at(temp_pin,1,s).M,0) end
+sol=checked(thermal('cantilever'))
+eq('P1C 8b thermal w(L)',Frame.at(sol,1,6).w,-.0144)
+eq('P1C 8b thermal M(3)',Frame.at(sol,1,3).M,0)
+sol=checked(thermal('fixed'))
+for _,s in ipairs{0,1.5,3,4.5,6} do
+    eq('P1C 12 thermal M s='..s,Frame.at(sol,1,s).M,8)
+    eq('P1C 12 thermal w s='..s,Frame.at(sol,1,s).w,0)
+end
+eq('P1C 12 thermal Ry i',sol.reactions[1].Ry,0)
+eq('P1C 12 thermal Ry j',sol.reactions[2].Ry,0)
+eq('P1C 12 thermal Mz i',sol.reactions[1].Mz,-8)
+eq('P1C 12 thermal Mz j',sol.reactions[2].Mz,8)
+sol=checked(thermal('propped'))
+eq('P1C 12b thermal M(0)',Frame.at(sol,1,0).M,12)
+eq('P1C 12b thermal M(L)',Frame.at(sol,1,6).M,0)
+local temp_q=checked(thermal(nil,true))
+local q_only=checked(beam(1,{true}))
+for s=0,6 do
+    eq('P1C 12c M s='..s,Frame.at(temp_q,1,s).M,Frame.at(temp_pin,1,s).M+Frame.at(q_only,1,s).M)
+    eq('P1C 12c w s='..s,Frame.at(temp_q,1,s).w,Frame.at(temp_pin,1,s).w+Frame.at(q_only,1,s).w)
+end
+-- Thermal load must be condensed with the mechanical loads.
+sol=checked(thermal('fixed',true,true))
+eq('P1C thermal hinges M(0)',Frame.at(sol,1,0).M,0)
+eq('P1C thermal hinges M(L)',Frame.at(sol,1,6).M,0)
+eq('P1C thermal hinges w(3)',Frame.at(sol,1,3).w,-.016875+.0036)
+-- kx and imposed dx/drz complete the three global components.
+m=beam(1,nil,nil,'fixed');m.supports[2].ux=false;m.supports[2].kx=1000
+m.nodal_loads={{node=2,Fx=10}}
+sol=checked(m)
+local axial_u=10/(1e8/6+1000)
+eq('P1C kx ux',sol.u[4],axial_u)
+eq('P1C kx reaction j',sol.reactions[2].Rx,-1000*axial_u)
+eq('P1C kx reaction i',sol.reactions[1].Rx,-1e8/6*axial_u)
+m=beam(1,nil,nil,'fixed');m.supports[2].dx=1e-5
+sol=checked(m)
+eq('P1C dx axial N',Frame.at(sol,1,3).N,1e8*1e-5/6)
+eq('P1C dx reaction i',sol.reactions[1].Rx,-1e8*1e-5/6)
+m=beam(1,nil,nil,'fixed');m.supports[2].drz=.001
+sol=checked(m)
+eq('P1C drz M(0)',Frame.at(sol,1,0).M,-2*1e4*.001/6)
+eq('P1C drz M(L)',Frame.at(sol,1,6).M,4*1e4*.001/6)
+-- A disconnected nodal rotation CAN carry a moment through its own kr.
+m=beam(1);m.members[1].hinge_i=true;m.members[1].hinge_j=true
+m.supports[2].kr=1000;m.nodal_loads={{node=2,M=5}}
+sol=checked(m)
+eq('P1C released joint spring rz',sol.u[6],.005)
+eq('P1C released joint spring Mz',sol.reactions[2].Mz,-5)
+eq('P1C released joint spring member M',Frame.at(sol,1,3).M,0)
+-- Validation: dT is supported, but requires positive finite alphaT AND h.
+for _,properties in ipairs{{},{alphaT=1.2e-5},{h=.3},{alphaT=0,h=.3},
+                           {alphaT=-1,h=.3},{alphaT=1.2e-5,h=0},{alphaT=1.2e-5,h=-1},
+                           {alphaT=math.huge,h=.3},{alphaT=1.2e-5,h=0/0}} do
+    m=beam(1)
+    m.members[1].alphaT=properties.alphaT;m.members[1].h=properties.h
+    m.member_loads={{member=1,type='dT',dT=20}}
+    fail(m,'dT requires positive finite alphaT and h')
+end
+for _,key in ipairs{'kx','ky','kr'} do
+    for _,value in ipairs{0,-1,math.huge,-math.huge,0/0} do
+        m=beam(1);m.supports[2][key]=value;fail(m,'spring must be positive and finite')
+    end
+    m=beam(1,nil,nil,'fixed');m.supports[1][key]=1000
+    fail(m,'spring and restraint on same DOF')
+end
+for _,key in ipairs{'dx','dy','drz'} do
+    m=beam(1);m.supports[3]={node=2,[key]=.01}
+    if key=='dy' then m.supports[2].uy=false end
+    fail(m,'prescribed displacement on unrestricted')
+end
+m=thermal();m.member_loads[1].dT=math.huge;fail(m,'invalid dT')
+m=beam(1);m.members[1].hinge_i=1;fail(m,'invalid hinge_i')
+-- Performance: 60 model nodes, Gerber-like one-ended releases and positive
+-- vertical springs at all interior nodes; springs stabilize every released span.
+m={nodes={},members={},supports={},member_loads={}}
+for i=1,60 do
+    m.nodes[i]={x=6*(i-1),y=0}
+    if i==1 then m.supports[#m.supports+1]={node=i,ux=true,uy=true,rz=true}
+    elseif i==60 then m.supports[#m.supports+1]={node=i,uy=true}
+    else m.supports[#m.supports+1]={node=i,ky=5000} end
+    if i>1 then
+        m.members[i-1]={i=i-1,j=i,EI=1e4,EA=1e8,hinge_j=true}
+        m.member_loads[#m.member_loads+1]={member=i-1,type='udl',q=-10}
+    end
+end
+t=os.clock();sol=checked(m);elapsed=os.clock()-t
+print(string.format('PERF P1C hinges+springs: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
+print(string.format('CHECKS P1C equilibrium=%.17g residual=%.17g compatibility=%.17g',
+    sol.checks.equilibrium_relative,sol.checks.residual_relative,sol.checks.compatibility_relative))
+print('PASS P1C: '..(rows-p1c_start)..' new numeric rows; 265 previous rows unchanged; contracts and performance')
 '''
 
 

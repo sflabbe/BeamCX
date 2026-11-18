@@ -125,7 +125,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 BeamCX/
 ├── src/
 │   ├── beam_core.lua       # Solver and result recovery
-│   ├── frame_core.lua (v0.4-P1B.1, not yet used by the app)
+│   ├── frame_core.lua (v0.4-P1C, not yet used by the app)
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/

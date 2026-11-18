@@ -1,4 +1,4 @@
--- BeamCX v0.4-P1B.1: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
+-- BeamCX v0.4-P1C: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
 -- Units: m, kN, kNm; EA in kN, EI in kN*m^2. No TI API or Beam dependency.
 -- Global x right, y up, rotations CCW; downward loads are NEGATIVE.
 -- Local x follows i -> j; local y is local x rotated +90 degrees.
@@ -10,7 +10,10 @@
 -- M(0)=-M_i, M(L)=+M_j. w is physical local-y displacement, u local-x.
 -- Member udl/dist/point act along local y, per unit MEMBER length, for any
 -- orientation. Concentrated moments act CCW about z (unchanged by rotation).
--- Global/projected member loads and axial member loads are outside P1B.
+-- hinge_i/j release MEMBER rotations; reconstructed rotations drive recovery.
+-- Thermal kappa_T=alphaT*dT/h: total curvature w''=M/EI-kappa_T.
+-- Springs act in global DOFs; reactions include their force -k*u.
+-- Global/projected member loads and axial thermal expansion are outside P1C.
 -- solve/assemble return nil,message on failure; at/extrema reject bad queries.
 -- moment_extrema returns min, s_min, max, s_max; deflection_extrema w, s.
 local Frame = {}
@@ -130,6 +133,89 @@ local function add_line_load(fe,L,a,b,qa,qb)
     end
 end
 
+-- Static release condensation, r = released local rotations, c = retained:
+-- k*=k_cc-k_cr inv(k_rr) k_rc; f*=f_c-k_cr inv(k_rr) f_r.
+-- Embed in six DOFs with exactly zero rows/columns at released rotations.
+-- Keep the originals to reconstruct theta_r=inv(k_rr)*(f_r-k_rc*u_c).
+local function condense(kl,fe,hinge_i,hinge_j)
+    if not hinge_i and not hinge_j then return kl,fe end
+    local r,c={},{}
+    if hinge_i then r[#r+1]=3 end
+    if hinge_j then r[#r+1]=6 end
+    for i=1,6 do if not (i==3 and hinge_i or i==6 and hinge_j) then c[#c+1]=i end end
+    local inv
+    if #r==1 then inv={{1/kl[r[1]][r[1]]}}
+    else
+        local a,b,d=kl[3][3],kl[3][6],kl[6][6]
+        local scale=math.max(math.abs(a),math.abs(b),math.abs(d))
+        a,b,d=a/scale,b/scale,d/scale
+        local den=(a*d-b*b)*scale
+        inv={{d/den,-b/den},{-b/den,a/den}}
+    end
+    local ks,fs=zeros(6,6),vector(6)
+    fs.correction=vector(6)
+    for _,i in ipairs(c) do
+        local value,low=fe[i],fe.correction[i]
+        for a,ra in ipairs(r) do for b,rb in ipairs(r) do
+            value,low=compensated_add(value,low,-kl[i][ra]*inv[a][b]*(fe[rb]+fe.correction[rb]))
+        end end
+        fs[i]=value+low;fs.correction[i]=(value-fs[i])+low
+        for _,j in ipairs(c) do if j>=i then
+            local v=kl[i][j]
+            for a,ra in ipairs(r) do for b,rb in ipairs(r) do v=v-kl[i][ra]*inv[a][b]*kl[rb][j] end end
+            -- Both releases leave ONLY the axial stiffness, exactly. Do not
+            -- retain roundoff-sized transverse stiffness as a false restraint.
+            if hinge_i and hinge_j and i~=1 and i~=4 then v=0 end
+            ks[i][j]=v;ks[j][i]=v
+        end end
+    end
+    return ks,fs,{r=r,c=c,inv=inv}
+end
+-- Zero-energy kinematics are independent of EA/EI. For released models, rank
+-- the axial/chord-rotation constraints (row normalized, tolerance 1e-12).
+-- This distinguishes a physical hinge mechanism from an ill-conditioned
+-- stiffness with positive but disparate rigidities or spring constants.
+local function check_hinge_kinematics(members,free,springs)
+    local has_hinge=false
+    for _,m in ipairs(members) do if m.hinge_i or m.hinge_j then has_hinge=true end end
+    if not has_hinge then return end
+    local rows={}
+    local function add(full)
+        local row,scale={},0
+        for i,d in ipairs(free) do row[i]=full[d] or 0;scale=math.max(scale,math.abs(row[i])) end
+        if scale>0 then
+            for i=1,#free do row[i]=row[i]/scale end
+            rows[#rows+1]=row
+        end
+    end
+    for _,m in ipairs(members) do
+        local i,j=3*m.i,3*m.j
+        add({[i-2]=-m.c,[i-1]=-m.s,[j-2]=m.c,[j-1]=m.s})
+        for _,endnode in ipairs{1,2} do
+            if not (endnode==1 and m.hinge_i or endnode==2 and m.hinge_j) then
+                local row={[i-2]=-m.s/m.L,[i-1]=m.c/m.L,[j-2]=m.s/m.L,[j-1]=-m.c/m.L}
+                row[endnode==1 and i or j]=1;add(row)
+            end
+        end
+    end
+    for d in pairs(springs) do add({[d]=1}) end
+    local rank,missing=0,nil
+    for col=1,#free do
+        local pivot,best=nil,0
+        for i=rank+1,#rows do
+            if math.abs(rows[i][col])>best then best=math.abs(rows[i][col]);pivot=i end
+        end
+        if best>1e-12 then
+            rank=rank+1;rows[rank],rows[pivot]=rows[pivot],rows[rank]
+            for i=rank+1,#rows do
+                local factor=rows[i][col]/rows[rank][col]
+                for j=col,#free do rows[i][j]=rows[i][j]-factor*rows[rank][j] end
+            end
+        else missing=missing or free[col] end
+    end
+    if rank<#free then error('mechanism: hinge kinematics at '..dof_label(missing),0) end
+end
+
 local function assemble(model)
     fields(model,{nodes=true,members=true,supports=true,nodal_loads=true,member_loads=true},'model')
     if type(model.nodes)~='table' or #model.nodes==0 or
@@ -142,20 +228,24 @@ local function assemble(model)
     if #nodes>MAX_NODES then error('model too large for handheld',0) end
     local nn=#nodes
     for i,m in ipairs(model.members) do
-        fields(m,{i=true,j=true,EI=true,EA=true},'member')
+        fields(m,{i=true,j=true,EI=true,EA=true,hinge_i=true,hinge_j=true,alphaT=true,h=true},'member')
+        for _,key in ipairs{'hinge_i','hinge_j'} do
+            if m[key]~=nil and type(m[key])~='boolean' then error('invalid '..key,0) end
+        end
         local ni,nj=node_index(m.i,nn),node_index(m.j,nn)
         local EI,EA=require_number(m.EI,'EI'),require_number(m.EA,'EA')
         local dx,dy=nodes[nj].x-nodes[ni].x,nodes[nj].y-nodes[ni].y
         local L=math.sqrt(dx*dx+dy*dy)
         if not finite(L) or L<=0 or EI<=0 or EA<=0 then error('invalid member geometry or rigidity',0) end
         members[i]={i=ni,j=nj,EI=EI,EA=EA,L=L,c=dx/L,s=dy/L,
-                    q=0,points={},moments={},distributed={},cuts={0,L},elements={}}
+                    q=0,kappa=0,hinge_i=m.hinge_i,hinge_j=m.hinge_j,alphaT=m.alphaT,h=m.h,
+                    points={},moments={},distributed={},cuts={0,L},elements={}}
     end
     for _,load in ipairs(model.member_loads or {}) do
         if type(load)~='table' then error('invalid member load',0) end
         local kind=load.type
         -- Diagnose unsupported TYPE before inspecting its possible fields.
-        if kind~='udl' and kind~='point' and kind~='dist' and kind~='moment' then
+        if kind~='udl' and kind~='point' and kind~='dist' and kind~='moment' and kind~='dT' then
             error('unsupported member load type: '..tostring(kind),0)
         end
         if kind=='udl' then
@@ -164,14 +254,21 @@ local function assemble(model)
             fields(load,{member=true,type=true,a=true,b=true,q1=true,q2=true},'dist load')
         elseif kind=='point' then
             fields(load,{member=true,type=true,a=true,P=true},'point load')
-        else
+        elseif kind=='moment' then
             fields(load,{member=true,type=true,a=true,M=true},'moment load')
+        else
+            fields(load,{member=true,type=true,dT=true},'dT load')
         end
         local mi=load.member
         if not finite(mi) or mi%1~=0 or not members[mi] then error('invalid member index',0) end
         local m=members[mi]
         if kind=='udl' then
             m.q=m.q+require_number(load.q,'q')
+        elseif kind=='dT' then
+            if not finite(m.alphaT) or m.alphaT<=0 or not finite(m.h) or m.h<=0 then
+                error('dT requires positive finite alphaT and h on member '..mi,0)
+            end
+            m.kappa=m.kappa+m.alphaT*require_number(load.dT,'dT')/m.h
         else
             local a=require_number(load.a,kind..' a')
             if a<0 or a>m.L then error(kind..' a outside member',0) end
@@ -229,6 +326,10 @@ local function assemble(model)
             local _,derivative=hermite(L,p.a)
             add_transverse(fe,derivative,p.M)
         end
+        -- M=EI*(w''+kappa_T). Integrating B^T*EI*kappa gives internal
+        -- nodal moments (-EI*kappa,+EI*kappa). Since f=k*u-fe, the thermal
+        -- consistent load has the opposite signs: fe[3]=+, fe[6]=-.
+        add_component(fe,3,m.EI*m.kappa);add_component(fe,6,-m.EI*m.kappa)
         for k=1,6 do
             local value=fe[k]+fe.correction[k]
             fe.correction[k]=(fe[k]-value)+fe.correction[k];fe[k]=value
@@ -236,7 +337,9 @@ local function assemble(model)
         local ni,nj=m.i,m.j
         local T=Frame.transformation(m.c,m.s)
         local kl=Frame.local_k(L,m.EA,m.EI)
-        local el={member=mi,L=L,EI=m.EI,T=T,kl=kl,kg=rotate_k(kl,T),fe=fe,
+        local ks,fs,release=condense(kl,fe,m.hinge_i,m.hinge_j)
+        local el={member=mi,L=L,EI=m.EI,T=T,kl=ks,kg=rotate_k(ks,T),fe=fs,
+                  full_kl=kl,full_fe=fe,release=release,
                   map={3*ni-2,3*ni-1,3*ni,3*nj-2,3*nj-1,3*nj}}
         elements[mi]=el;m.elements={el}
     end
@@ -293,14 +396,54 @@ local function assemble(model)
             for j=1,6 do K[d][el.map[j]]=K[d][el.map[j]]+el.kg[i][j] end
         end
     end
-    local fixed={}
+    local fixed,prescribed,springs={},{},{}
+    local spring_names={'kx','ky','kr'}
+    local imposed_names={'dx','dy','drz'}
     for _,support in ipairs(model.supports or {}) do
-        fields(support,{node=true,ux=true,uy=true,rz=true},'support')
+        fields(support,{node=true,ux=true,uy=true,rz=true,kx=true,ky=true,kr=true,dx=true,dy=true,drz=true},'support')
         local ni=node_index(support.node,nn)
         for j,name in ipairs(dof_names) do
+            local d=3*ni-3+j
             local v=support[name]
             if v~=nil and type(v)~='boolean' then error('unsupported prescribed displacement '..name,0) end
-            if v then fixed[3*ni-3+j]=true end
+            if v then fixed[d]=true end
+            local spring=support[spring_names[j]]
+            if spring~=nil then
+                if not finite(spring) or spring<=0 then error('spring must be positive and finite: '..dof_label(d),0) end
+                springs[d]=(springs[d] or 0)+spring
+            end
+            local imposed=support[imposed_names[j]]
+            if imposed~=nil then
+                require_number(imposed,'prescribed displacement '..name)
+                if prescribed[d]~=nil and prescribed[d]~=imposed then error('conflicting prescribed displacement '..dof_label(d),0) end
+                prescribed[d]=imposed
+            end
+        end
+    end
+    for d,value in pairs(prescribed) do
+        -- Zero defaults do not impose motion on an unrestricted DOF.
+        if not fixed[d] and value~=0 then error('prescribed displacement on unrestricted '..dof_label(d),0) end
+    end
+    for d,k in pairs(springs) do
+        if fixed[d] then error('spring and restraint on same DOF: '..dof_label(d),0) end
+        K[d][d]=K[d][d]+k
+    end
+    local connected,rotation_active={},{}
+    for _,m in ipairs(members) do
+        connected[m.i]=true;connected[m.j]=true
+        if not m.hinge_i then rotation_active[m.i]=true end
+        if not m.hinge_j then rotation_active[m.j]=true end
+    end
+    -- A joint rotation disconnected by ALL incident releases is a redundant
+    -- coordinate, not a physical mechanism. Fix it internally to zero; a
+    -- nodal moment there has no load path and must instead fail as mechanism.
+    -- Record these node indices in sol.inactive_rotations for inspection.
+    local inactive_rotations={}
+    for i=1,nn do
+        local d=3*i
+        if connected[i] and not rotation_active[i] and not fixed[d] and not springs[d] then
+            if F[d]~=0 then error('mechanism: nodal moment at released '..dof_label(d),0) end
+            fixed[d]=true;prescribed[d]=0;inactive_rotations[#inactive_rotations+1]=i
         end
     end
     local free={}
@@ -311,8 +454,10 @@ local function assemble(model)
         end
         if not fixed[i] then free[#free+1]=i end
     end
+    check_hinge_kinematics(members,free,springs)
     return {nodes=nodes,members=members,elements=elements,K=K,F=F,ndof=nd,
-            fixed=fixed,free=free,applied=applied}
+            fixed=fixed,prescribed=prescribed,springs=springs,inactive_rotations=inactive_rotations,
+            free=free,applied=applied}
 end
 function Frame.assemble(model)
     local ok,result=pcall(assemble,model)
@@ -331,7 +476,12 @@ local function linear_solve(sol)
         local rowmax=0
         for j=1,n do a[i][j]=K[free[i]][free[j]];rowmax=math.max(rowmax,math.abs(a[i][j])) end
         if rowmax==0 then error('mechanism: zero stiffness at '..dof_label(free[i]),0) end
-        a[i][n+1]=F[free[i]];scale[i]=rowmax
+        local rhs=F[free[i]]
+        for d=1,sol.ndof do
+            local value=sol.prescribed[d] or 0
+            if sol.fixed[d] and value~=0 then rhs=rhs-K[free[i]][d]*value end
+        end
+        a[i][n+1]=rhs;scale[i]=rowmax
     end
     for k=1,n do
         local imax,score=k,-1
@@ -359,18 +509,19 @@ local function linear_solve(sol)
     return x
 end
 -- Exact polynomials on a RECOVERY span, x measured from its left cut.
--- w''=M/EI, integrated from the preceding w and rotation. Horner evaluation
+-- w''=M/EI-kappa_T, integrated from preceding w and rotation. Horner evaluation
 -- keeps all powers local to the span; no new stiffness matrix is introduced.
 local function span_value(span,x)
     local V=span.V+x*(span.qa+x*span.g/2)
     local M=span.M+x*(span.V+x*(span.qa/2+x*span.g/6))
-    local theta=span.theta+x*(span.M+x*(span.V/2+x*(span.qa/6+x*span.g/24)))/span.EI
-    local w=span.w+x*(span.theta+x*(span.M/2+x*(span.V/6+x*(span.qa/24+x*span.g/120)))/span.EI)
+    local mechanical=span.M-span.EI*(span.kappa or 0)
+    local theta=span.theta+x*(mechanical+x*(span.V/2+x*(span.qa/6+x*span.g/24)))/span.EI
+    local w=span.w+x*(span.theta+x*(mechanical/2+x*(span.V/6+x*(span.qa/24+x*span.g/120)))/span.EI)
     return V,M,w,theta
 end
 -- The ONLY nodal -> diagram conversion. Starting at i: N=-Ni, V=Vi,
 -- M=-Mi. Crossing a point adds P to V; crossing a CCW moment subtracts M0
--- from M. Integrate dV/ds=q, dM/ds=V, w''=M/EI between exact load cuts.
+-- from M. Integrate dV/ds=q, dM/ds=V, w''=M/EI-kappa_T between load cuts.
 -- Loads AT i are crossed before the first span; loads AT j act outside its
 -- left limit. Thus diagrams still describe the physical interior of a member.
 local function nodal_to_diagram(el,m)
@@ -390,7 +541,7 @@ local function nodal_to_diagram(el,m)
                 qa=qa+d.q1+gradient*(a-da);g=g+gradient
             end
         end
-        local span={x0=a,x1=b,L=b-a,EI=el.EI,V=V+Vlow,M=M+Mlow,w=w,theta=theta,qa=qa,g=g}
+        local span={x0=a,x1=b,L=b-a,EI=el.EI,V=V+Vlow,M=M+Mlow,w=w,theta=theta,qa=qa,g=g,kappa=m.kappa}
         el.spans[#el.spans+1]=span
         local h=span.L
         local _,_,next_w,next_theta=span_value(span,h)
@@ -433,7 +584,7 @@ local function compatibility(el,w_end,theta_end)
         local function visit(x) candidate(span,x) end
         candidate(span,0);candidate(span,span.L)
         roots_on_span(span,function(x) local _,_,_,t=span_value(span,x);return t end,visit)
-        roots_on_span(span,function(x) local _,M=span_value(span,x);return M end,visit)
+        roots_on_span(span,function(x) local _,M=span_value(span,x);return M-span.EI*(span.kappa or 0) end,visit)
     end
     local dw,dt=w_end-el.u[5],theta_end-el.u[6]
     local rw=w_scale==0 and (dw==0 and 0 or math.huge) or math.abs(dw)/w_scale
@@ -446,6 +597,7 @@ local function solve(model)
     local sol=assemble(model)
     local uf=linear_solve(sol)
     local u=vector(sol.ndof)
+    for d,value in pairs(sol.prescribed) do if sol.fixed[d] then u[d]=value end end
     for i,d in ipairs(sol.free) do u[d]=uf[i] end
     sol.u=u
     local residual=vector(sol.ndof)
@@ -460,9 +612,11 @@ local function solve(model)
     local free_residual=0
     for _,d in ipairs(sol.free) do free_residual=math.max(free_residual,math.abs(residual[d])) end
     for i,node in ipairs(sol.nodes) do
-        local rx=sol.fixed[3*i-2] and residual[3*i-2] or 0
-        local ry=sol.fixed[3*i-1] and residual[3*i-1] or 0
-        local mz=sol.fixed[3*i] and residual[3*i] or 0
+        -- Spring reaction is the force ON the structure, -k*u. K already
+        -- includes +k on its diagonal for the free-DOF residual check.
+        local rx=sol.fixed[3*i-2] and residual[3*i-2] or -(sol.springs[3*i-2] or 0)*u[3*i-2]
+        local ry=sol.fixed[3*i-1] and residual[3*i-1] or -(sol.springs[3*i-1] or 0)*u[3*i-1]
+        local mz=sol.fixed[3*i] and residual[3*i] or -(sol.springs[3*i] or 0)*u[3*i]
         sol.reactions[i]={Rx=rx,Ry=ry,Mz=mz}
         Fx=Fx+rx;Fy=Fy+ry;Mz=Mz+node.x*ry-node.y*rx+mz
     end
@@ -478,6 +632,20 @@ local function solve(model)
     for _,el in ipairs(sol.elements) do
         el.u=vector(6);el.f=vector(6);el.f_correction=vector(6)
         for i=1,6 do for j=1,6 do el.u[i]=el.u[i]+el.T[i][j]*u[el.map[j]] end end
+        if el.release then
+            local release,rhs=el.release,{}
+            for a,r in ipairs(release.r) do
+                local value,low=el.full_fe[r],el.full_fe.correction[r]
+                for _,c in ipairs(release.c) do value,low=compensated_add(value,low,-el.full_kl[r][c]*el.u[c]) end
+                rhs[a]=value+low
+            end
+            for a,r in ipairs(release.r) do
+                el.u[r]=0
+                for b=1,#release.r do el.u[r]=el.u[r]+release.inv[a][b]*rhs[b] end
+            end
+        end
+        -- Use CONDENSED k and fe for end forces; released moments are zero.
+        -- Actual reconstructed member rotations above drive w and compatibility.
         -- Essential: subtract the consistent fixed-end load vector.
         for i=1,6 do
             local value,low=-el.fe[i],-el.fe.correction[i]

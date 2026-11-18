@@ -3,11 +3,12 @@
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
 TI-Lua 5.1 app for one prismatic beam span, with support presets, load diagrams, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.3 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.3.2 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
 
 ## Features
 
 - One horizontal span with four boundary-condition presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned.
+- Visual 2×2 system selector with compact supports and reference bending-moment silhouettes for a downward uniform load (`q>0`). These silhouettes illustrate the four support cases; they are not results from the current model.
 - Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards.
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
 - Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
@@ -46,16 +47,19 @@ lua5.1 tests/quick_check.lua "$PWD"
 
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
-Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. Earlier BeamCX versions were observed running on hardware. **v0.3 has not been validated on physical hardware**, including CAS access from Calculator; local tests execute Lua and simulate the TI canvas and variable API.
+Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. **v0.3 was tested on a TI-Nspire CX CAS on 2026-11-18** using S235, IPE 300 and `q = 10 kN/m` with automatic self-weight: results, the L/250 deflection comparison and CAS export were checked, including `bx_mmax = 46.8629` read in a Calculator page. **v0.3.2 has not yet been tested on the calculator**; its automated tests simulate the TI canvas and variable API.
 
 ## Keys
 
-| Key | Beam input | Diagrams / results | Material / section |
-| --- | --- | --- | --- |
-| `TAB` | Diagrams | Material / section | Beam input |
-| `↑` / `↓` | Choose field | Move cursor; in results select L/250 or L/300 | Choose field |
-| `←` / `→` | Change support preset | Cycle M / V / w / results | Change material, profile or self-weight ON/OFF |
-| `ENTER` | Apply numerical input | Open results; in results **EXPORT CAS** | Apply input or toggle selection |
+New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press `ENTER` to confirm the system and open beam input. A failed calculation keeps the previous confirmed model and leaves the selector open with an error. `ESC` returns to the selector; while entering a number, the first `ESC` only cancels that edit. Documents saved on an existing input, diagram or section page reopen on that page.
+
+| Key | System selector | Beam input | Diagrams / results | Material / section |
+| --- | --- | --- | --- | --- |
+| `TAB` | No effect | Diagrams | Material / section | Beam input |
+| `↑` / `↓` | Choose row | Choose field | Move cursor; in results select L/250 or L/300 | Choose field |
+| `←` / `→` | Choose column | Change support preset | Cycle M / V / w / results | Change material, profile or self-weight ON/OFF |
+| `ENTER` | Confirm and open input | Apply numerical input | Open results; in results **EXPORT CAS** | Apply input or toggle selection |
+| `ESC` | No effect | Cancel active edit; otherwise selector | Selector | Cancel active edit; otherwise selector |
 
 In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in **kN·m²**. Numerical `EI` is editable when material is `MANUAL`. In the sections page, choose a material and either a steel profile or concrete dimensions. Use the calculator's normal document save command to retain settings.
 
@@ -117,7 +121,8 @@ BeamCX/
 │   ├── test_catalog.py     # EI, materials, inputs and persistence
 │   ├── test_plot_sign.py   # M/V/w plotting conventions
 │   ├── test_arrows.py      # One filled arrowhead per load
-│   ├── test_quick_check.py # v0.3 harness
+│   ├── test_quick_check.py # Quick Beam Check harness
+│   ├── test_selector.py    # Visual selector, reference moments, Esc, restore
 │   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
@@ -125,7 +130,7 @@ BeamCX/
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3, the full regression scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Canvas checks cover 320×240 and a reduced 320×212 app area, with approximate font widths. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3.2, the full regression scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Selector canvas checks cover 318×212, 320×212 and 320×240, with approximate font widths. These checks do not replace physical-device validation.
 
 ## Data references
 

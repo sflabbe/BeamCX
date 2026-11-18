@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2
+- Added a visual 2×2 support-system selector with compact schematics and reference M silhouettes for a downward uniform load (`q>0`), independent of the current model.
+- Confirm systems with Enter using transactional calculation and full rollback on failure. New documents start at the selector; Esc returns to it and Tab has no effect there.
+- Esc clears an input error when a valid result exists; malformed numeric text retains the confirmed model's solution. Failed-calculation diagnostics remain available.
+- Preserved legacy document pages, loads and sections; selector saves restore focus to the confirmed support without adding saved fields.
+- Added reference-formula, drawing-sign, layout, no-solve repaint, Esc/CAS recovery and persistence checks.
+
 ## 0.3
 - Added analytical maximum absolute deflection and position, span/deflection ratio, L/250 and L/300 utilization and selectable comparison status.
 - Added compact results within the existing diagram page; concrete warning `RC: GROSS EI ONLY`.

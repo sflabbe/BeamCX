@@ -1,4 +1,4 @@
-"""P1 system selector: actual bundled TI-Lua, rollback and simulated canvas."""
+"""Visual system selector: actual bundled TI-Lua, rollback and simulated canvas."""
 import ctypes
 from pathlib import Path
 
@@ -221,9 +221,86 @@ for _,invalid in ipairs{7,'x'} do
 end
 print('PASS: selector restore, legacy pages and invalid page recovery')
 
+-- P3. Invalid text leaves the confirmed model valid. Idle Esc clears its error,
+-- then the same confirmed system can be reopened and exported normally.
+fresh();on.enterKey();on.arrowDown() -- L field
+local valid=state()
+on.charIn('.');on.charIn('.');on.enterKey()
+assert(state().page==1 and state().err=='invalid number')
+assert(rawequal(state().result,valid.result) and rawequal(state().summary,valid.summary))
+on.escapeKey()
+assert(state().page==0 and state().err==nil and state().support==valid.support)
+on.enterKey();assert(state().page==1 and state().result~=nil)
+on.tabKey();on.enterKey() -- results
+local exported={}
+var={store=function(name,value) exported[name]=value end}
+on.enterKey()
+assert(state().export_message=='CAS: 8 variables stored')
+local exported_count=0
+for _ in pairs(exported) do exported_count=exported_count+1 end
+assert(exported_count==8 and exported.bx_mmax==45)
+for target_page=2,3 do
+    fresh();on.enterKey();on.arrowDown()
+    on.charIn('.');on.charIn('.');on.enterKey()
+    for i=2,target_page do on.tabKey() end
+    assert(state().page==target_page and state().result~=nil and state().err=='invalid number')
+    on.escapeKey();assert(state().page==0 and state().err==nil)
+end
+-- A failed calculation remains invalid after Esc, with its diagnostic intact.
+fresh();on.enterKey();on.arrowDown();on.charIn('0');on.enterKey()
+local failed=state()
+assert(failed.result==nil and failed.err~=nil)
+on.escapeKey();assert(state().page==0 and state().err==failed.err)
+print('PASS: Esc clears errors only for a valid result; invalid text recovery exports all CAS variables')
+
+-- P3. Explicit v0.2-format document: no settings, preserved loads / section.
+fresh()
+local v02={params={L=8,q=7,P=12,a=3,EI=10000,support=4},
+    section={material=5,profile=10,b=250,h=450,manualEI=10000},
+    page=2,mode=2,cursor=0.25}
+on.restore(v02)
+local restored=on.save()
+assert(restored.page==2 and restored.mode==2 and restored.cursor==0.25)
+for _,key in ipairs{'L','q','P','a','support'} do eq(restored.params[key],v02.params[key]) end
+same(restored.section,v02.section)
+eq(restored.params.EI,DB.compute(v02.section).EI)
+assert(restored.settings.self_weight==false and restored.settings.limit==250)
+eq(state().result.p.q,7)
+fresh();focus(3);on.enterKey();on.escapeKey()
+local selector_saved=on.save()
+assert(selector_saved.page==0 and selector_saved.params.support==3)
+focus(1);fresh();on.restore(selector_saved)
+assert(state().page==0 and state().support==3 and state().sel_index==3)
+same(selector_saved,on.save())
+print('PASS: v0.2 loads / section restore on page 2 and saved selector restores focus to support 3')
+
+-- P2. Exercise the actual private formula used by painting, without exporting
+-- another app API. This is the only solver-based reference-silhouette test.
+local function upvalue(fn,wanted)
+    local i=1
+    while true do
+        local name,value=debug.getupvalue(fn,i)
+        assert(name,'missing test upvalue '..wanted)
+        if name==wanted then return value end
+        i=i+1
+    end
+end
+fresh()
+local reference_moment=upvalue(upvalue(on.paint,'draw_selector'),'selector_moment')
+for c=1,4 do
+    local sol,message=Beam.solve{L=1,q=1,P=0,a=0,EI=1,support=c}
+    assert(sol,message)
+    for j=0,10 do
+        local xi=j/10
+        assert(math.abs(reference_moment(c,xi)-Beam.at(sol,xi).M)<1e-9,
+            'reference coefficients disagree with solver for support '..c)
+    end
+end
+print('PASS: all four closed reference-moment formulas match the solver at eleven positions')
+
 -- 9. All selector coordinates and approximate text extents stay on the canvas.
 -- No physical LCD / font validation is claimed by this simulated canvas.
-local gc={font=10,fill={},texts={},lines=0,pen=nil,rgb={}}
+local gc={font=10,fill={},texts={},lines=0,pen=nil,rgb={},curves={},axes={},schematics={}}
 local function point(x,y)
     assert(type(x)=='number' and x>=0 and x<=width,'x outside window: '..tostring(x))
     assert(type(y)=='number' and y>=0 and y<=height,'y outside window: '..tostring(y))
@@ -235,26 +312,42 @@ function gc:fillRect(x,y,w,h)
     point(x,y);point(x+w,y+h)
     self.fill[#self.fill+1]={x=x,y=y,w=w,h=h,color=self.rgb}
 end
-function gc:setPen(pen,style) self.pen=pen end
+function gc:setPen(pen,style) self.pen=pen;self.style=style end
 function gc:drawLine(x1,y1,x2,y2)
     point(x1,y1);point(x2,y2)
     assert(self.pen=='thin','selector strokes must be thin')
+    assert(self.style=='smooth','selector strokes must match the smooth M diagram pen')
     self.lines=self.lines+1
+    local segment={x1=x1,y1=y1,x2=x2,y2=y2,card=#self.fill-2}
+    if self.rgb[1]==242 and self.rgb[2]==177 and self.rgb[3]==103 then
+        self.curves[#self.curves+1]=segment
+    elseif self.rgb[1]==115 and self.rgb[2]==132 and self.rgb[3]==148 then
+        self.axes[#self.axes+1]=segment
+    else self.schematics[#self.schematics+1]=segment end
 end
 function gc:drawString(t,x,y,anchor)
     assert(anchor=='top')
     point(x,y);point(x+self:getStringWidth(t),y+self.font+3)
-    self.texts[#self.texts+1]={text=t,x=x,y=y,h=self.font+3}
+    self.texts[#self.texts+1]={text=t,x=x,y=y,h=self.font+3,w=self:getStringWidth(t),font=self.font}
 end
-function gc:fillPolygon() error('P1 selector must not draw loads or a moment silhouette') end
+function gc:fillPolygon() error('selector schematics and silhouettes must use lines') end
 local function paint(c,has_error)
     focus(c)
     gc.fill={};gc.texts={};gc.lines=0
+    gc.curves={};gc.axes={};gc.schematics={}
     local before=state()
+    local solve=Beam.solve
+    local paint_solves=0
+    Beam.solve=function(p) paint_solves=paint_solves+1;return solve(p) end
     on.paint(gc)
+    Beam.solve=solve
+    assert(paint_solves==0,'selector painting must never solve')
     unchanged(before,state(),true)
     assert(#gc.fill==6,'expected background, header and four cards')
-    assert(gc.lines==39,'expected only four beam/support schematics')
+    assert(#gc.curves==4*32,'expected four 32-segment moment silhouettes')
+    assert(#gc.schematics==39,'expected four compact beam/support schematics')
+    assert(#gc.axes==4,'expected one reference axis per card')
+    assert(gc.lines==#gc.curves+#gc.axes+#gc.schematics)
     local highlighted=0
     for i=3,6 do
         if gc.fill[i].color[1]==213 then
@@ -263,11 +356,76 @@ local function paint(c,has_error)
         end
     end
     assert(highlighted==1)
+    -- Cards have three disjoint zones at every supported window size.
+    -- Name: 12 px; compact supports: 18 px; M: remaining height minus gaps.
+    local preset_names={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
+    local absolute_m={1/8,1/2,1/12,1/8}
+    for card=1,4 do
+        local box=gc.fill[card+2]
+        local name_top,name_bottom=box.y+2,box.y+14
+        local scheme_top,scheme_bottom=box.y+15,box.y+33
+        local moment_top,moment_bottom=box.y+35,box.y+box.h-2
+        assert(name_bottom<scheme_top and scheme_bottom<moment_top)
+        assert(moment_bottom-moment_top>=20,'tested windows need at least 20 px for M')
+        assert(box.y>=46 and box.y+box.h<=height-43,'card invades title or error / footer')
+        local mid=(moment_top+moment_bottom)/2
+        local left,right=box.x+21,box.x+box.w-21
+        local curves,axes,schematics=0,0,0
+        local amplitude=0
+        local found_name=false
+        for _,text in ipairs(gc.texts) do
+            if text.text==preset_names[card] then
+                found_name=true
+                assert(text.font==9 and text.y>=name_top and text.y+text.h<=name_bottom)
+                assert(text.x>=box.x and text.x+text.w<=box.x+box.w)
+            end
+        end
+        assert(found_name,'missing card name')
+        for _,line in ipairs(gc.schematics) do
+            if line.card==card then
+                schematics=schematics+1
+                for _,p in ipairs{{line.x1,line.y1},{line.x2,line.y2}} do
+                    assert(p[1]>=box.x and p[1]<=box.x+box.w)
+                    assert(p[2]>=scheme_top and p[2]<=scheme_bottom,'schematic leaves its zone')
+                end
+            end
+        end
+        assert(schematics>0)
+        for _,line in ipairs(gc.axes) do
+            if line.card==card then
+                axes=axes+1
+                eq(line.x1,left);eq(line.x2,right);eq(line.y1,mid);eq(line.y2,mid)
+            end
+        end
+        assert(axes==1)
+        for _,line in ipairs(gc.curves) do
+            if line.card==card then
+                curves=curves+1
+                for _,p in ipairs{{line.x1,line.y1},{line.x2,line.y2}} do
+                    assert(p[1]>=left and p[1]<=right)
+                    assert(p[2]>=moment_top and p[2]<=moment_bottom,'silhouette leaves its zone')
+                    local xi=(p[1]-left)/(right-left)
+                    local m=reference_moment(card,xi)
+                    eq(p[2],mid+m*(moment_bottom-moment_top)/(2*absolute_m[card]))
+                    if m>1e-12 then assert(p[2]>mid,'positive M must be below axis')
+                    elseif m< -1e-12 then assert(p[2]<mid,'negative M must be above axis')
+                    else eq(p[2],mid) end
+                    if card==1 and xi>0 and xi<1 then assert(p[2]>mid,'PIN-PIN interior must be below') end
+                    if card==2 and xi<1 then assert(p[2]<mid,'FIX-FREE interior must be above') end
+                    amplitude=math.max(amplitude,math.abs(p[2]-mid))
+                end
+            end
+        end
+        assert(curves==32)
+        eq(amplitude,(moment_bottom-moment_top)/2)
+    end
     local names={}
+    local legend_count=0
     local error_visible=false
     local cards_bottom=gc.fill[6].y+gc.fill[6].h
     for _,t in ipairs(gc.texts) do
         names[t.text]=true
+        if t.text=='M (q>0)' then legend_count=legend_count+1 end
         if has_error and t.y==height-33 then
             error_visible=true
             assert(#t.text>0 and #t.text<#state().selector_error,'long error must be fitted')
@@ -278,6 +436,7 @@ local function paint(c,has_error)
         assert(names[t],'missing selector label '..t)
     end
     assert(error_visible==has_error)
+    assert(legend_count==1,'reference M legend must appear exactly once')
 end
 for _,size in ipairs{{318,212},{320,212},{320,240}} do
     width,height=size[1],size[2]
@@ -290,7 +449,18 @@ for _,size in ipairs{{318,212},{320,212},{320,240}} do
     assert(state().page==0 and state().selector_error~=nil)
     paint(4,true)
 end
-print('PASS: selector paint and visible errors at 318x212, 320x212 and 320x240, with thin schematics and no moment silhouettes')
+print('PASS: signed moment silhouettes, disjoint zones, one legend and zero solves per paint at 318x212, 320x212 and 320x240')
+-- Below the 14 px silhouette minimum, names / supports remain and M is omitted.
+width,height=318,180
+fresh()
+gc.fill={};gc.texts={};gc.lines=0;gc.curves={};gc.axes={};gc.schematics={}
+local solves_small=0
+original=Beam.solve
+Beam.solve=function(p) solves_small=solves_small+1;return original(p) end
+on.paint(gc)
+Beam.solve=original
+assert(#gc.curves==0 and #gc.axes==0 and #gc.schematics==39 and solves_small==0)
+print('PASS: short silhouette zones omit M while retaining the compact support schematics')
 '''
 vm = lib.luaL_newstate()
 try:

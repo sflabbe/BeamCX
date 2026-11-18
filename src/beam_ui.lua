@@ -1,4 +1,4 @@
--- BeamCX v0.3, UI (TI-Lua 5.1). Quick beam check.
+-- BeamCX v0.3.2, UI (TI-Lua 5.1). Visual system selector.
 local SectionDB=DB -- the offline DB from the generated single-file script
 local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
@@ -94,7 +94,7 @@ local function label(gc,t,x,y) gc:drawString(t,x,y,'top') end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.3',6,4)
+    label(gc,'BeamCX | EB 2D | v0.3.2',6,4)
 end
 local function name_value(index)
     local key=names[index]
@@ -214,9 +214,29 @@ local function support(gc,x,y,isleft,clamp)
         if not isleft then gc:drawLine(x-10,y+16,x+10,y+16) end
     end
 end
+-- Compact selector-only supports; the diagram support() above is unchanged.
+local function mini_support(gc,x,y,isleft,clamp)
+    color(gc,91,195,203)
+    if clamp then
+        gc:drawLine(x,y-5,x,y+5)
+        for j=0,4 do gc:drawLine(x-3,y-3+j*2,x,y-5+j*2) end
+    else
+        gc:drawLine(x,y,x-5,y+6);gc:drawLine(x,y,x+5,y+6)
+        gc:drawLine(x-5,y+6,x+5,y+6)
+        if not isleft then gc:drawLine(x-5,y+9,x+5,y+9) end
+    end
+end
+-- Reference UDL moments / (q*L^2), independent of the current model.
+local selector_moment_ends={{0,0},{-1/2,0},{-1/12,-1/12},{-1/8,0}}
+local function selector_moment(index,xi)
+    local ends=selector_moment_ends[index]
+    return xi*(1-xi)/2+ends[1]*(1-xi)+ends[2]*xi
+end
 local function draw_selector(gc,w,h)
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
     label(gc,'SELECT SYSTEM',8,28)
+    gc:setFont('sansserif','r',9)
+    label(gc,'M (q>0)',w-76,28)
     local margin,gap,top=8,8,46
     local card_w=(w-2*margin-gap)/2
     local card_h=(h-43-top-gap)/2
@@ -229,12 +249,32 @@ local function draw_selector(gc,w,h)
         gc:fillRect(x,y,card_w,card_h)
         if i==sel_index then color(gc,18,44,66)
         else color(gc,215,225,236) end
-        label(gc,presets[i],x+8,y+5)
-        local left,right,ybeam=x+21,x+card_w-21,y+33
+        -- Zones: name [y+2,y+14], schematic [y+15,y+33],
+        -- moment [y+35,y+card_h-2]. The last zone follows the window height.
+        label(gc,presets[i],x+8,y+2)
+        local left,right,ybeam=x+21,x+card_w-21,y+22
         gc:drawLine(left,ybeam,right,ybeam)
-        support(gc,left,ybeam,true,i~=1)
-        if i~=2 then support(gc,right,ybeam,false,i==3) end
-        -- Lower card space is reserved; no moment silhouette in P1.
+        mini_support(gc,left,ybeam,true,i~=1)
+        if i~=2 then mini_support(gc,right,ybeam,false,i==3) end
+        local moment_top,moment_bottom=y+35,y+card_h-2
+        local moment_h=moment_bottom-moment_top
+        if moment_h>=14 then
+            local mid=(moment_top+moment_bottom)/2
+            local data,max_m={},0
+            for j=0,32 do
+                local m=selector_moment(i,j/32)
+                data[j+1]=m;max_m=math.max(max_m,math.abs(m))
+            end
+            color(gc,115,132,148);gc:drawLine(left,mid,right,mid)
+            color(gc,242,177,103) -- same color and thin smooth pen as diagram M
+            for j=1,32 do
+                local x0=left+(right-left)*(j-1)/32
+                local x1=left+(right-left)*j/32
+                -- Positive sagging moments are below the reference axis.
+                gc:drawLine(x0,mid+data[j]*moment_h/(2*max_m),
+                    x1,mid+data[j+1]*moment_h/(2*max_m))
+            end
+        end
     end
     gc:setFont('sansserif','r',9)
     if selector_error then
@@ -362,7 +402,8 @@ end
 local function commit()
     if typing==nil then return end
     local v=tonumber(typing)
-    if v==nil then result=nil;summary=nil;export_message=nil;err='invalid number'
+    -- Invalid text never changed the model; retain its last valid solution.
+    if v==nil then export_message=nil;err='invalid number'
     elseif page==1 then apply_edit(names[edit_index],v)
     elseif page==3 then
         local row=active_section_index()[sec_index]
@@ -438,7 +479,10 @@ end
 function on.escapeKey()
     if page==0 then return end
     if typing~=nil then typing=nil;err=nil
-    else page=0;sel_index=params.support;selector_error=nil end
+    else
+        if result~=nil then err=nil end
+        page=0;sel_index=params.support;selector_error=nil
+    end
     redraw()
 end
 local function move_field(d)

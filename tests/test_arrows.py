@@ -42,10 +42,10 @@ local function paint(q,P,expected)
     local found=false
     for _,l in ipairs(gc.lines) do
       if l[1]==p[5] and l[3]==p[5] and l[4]==p[2]
-       and (l[2]==43 or l[2]==32) then found=true;break end
+       and (l[2]==55 or l[2]==47) then found=true;break end
     end
     assert(found,'shaft must stop exactly at head base')
-    assert(p[6]==60 and p[2]==53,'arrow geometry must retain gap from beam')
+    assert(p[6]==73 and p[2]==66,'arrow geometry must meet the beam below the title')
   end
 end
 paint(10,0,9)     -- distributed load: exactly 9 heads

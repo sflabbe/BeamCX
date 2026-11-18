@@ -312,21 +312,24 @@ function Beam.deflection_extrema(sol)
 end
 
 -- Deflection comparison only; not a code-compliance certificate.
-function Beam.deflection_check(sol,limit)
+function Beam.deflection_check(sol,limit,lref_factor)
     local w,x=Beam.deflection_extrema(sol)
-    local ratio=w>0 and sol.p.L*1000/w or nil
-    local u250=w/(sol.p.L*1000/250)
-    local u300=w/(sol.p.L*1000/300)
+    lref_factor=lref_factor or 1
+    local lref=lref_factor*sol.p.L
+    local ratio=w>0 and lref*1000/w or nil
+    local u250=w/(lref*1000/250)
+    local u300=w/(lref*1000/300)
     local utilization=(limit==300) and u300 or u250
     local status='N/A'
     if ratio then status=utilization<=1+1e-12 and 'OK' or 'EXCEEDED' end
-    return {w_abs_max=w,x_wmax=x,ratio=ratio,u250=u250,u300=u300,status=status}
+    return {w_abs_max=w,x_wmax=x,ratio=ratio,u250=u250,u300=u300,status=status,
+        lref=lref,lref_factor=lref_factor}
 end
 
 -- Numeric results in the documented bx_ export units. Shear extrema include
 -- both faces of every segment, including jumps at the point load.
-function Beam.summary(sol,limit)
-    local out=Beam.deflection_check(sol,limit)
+function Beam.summary(sol,limit,lref_factor)
+    local out=Beam.deflection_check(sol,limit,lref_factor)
     local low,_,high=Beam.moment_extrema(sol)
     out.mmin=low;out.mmax=high
     out.vabs=0

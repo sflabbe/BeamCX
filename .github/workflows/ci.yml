@@ -13,9 +13,13 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install Lua runtime used by test harness
-        run: sudo apt-get update && sudo apt-get install -y liblua5.4-0
+        run: sudo apt-get update && sudo apt-get install -y liblua5.4-0 lua5.1
       - name: Generate the TI-Lua bundle
         run: python3 build.py
+      - name: Check Lua 5.1 syntax and run analytical/UI regressions
+        run: |
+          luac5.1 -p BeamCX.lua
+          lua5.1 tests/quick_check.lua "$PWD"
       - name: Run mechanics, catalogue and drawing tests
         run: |
           set -e

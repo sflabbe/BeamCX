@@ -1,4 +1,4 @@
--- BeamCX v0.3.2, UI (TI-Lua 5.1). Visual system selector.
+-- BeamCX v0.3.3, UI (TI-Lua 5.1). Drawing and cantilever reference fixes.
 local SectionDB=DB -- the offline DB from the generated single-file script
 local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
@@ -23,6 +23,14 @@ local function fmt(x)
     return string.format('%.5g',x)
 end
 local function sec_info() return SectionDB.compute(section) end
+local function lref_factor()
+    local material=SectionDB.materials[section.material]
+    if params.support==2 and material and material.kind=='concrete' then
+        -- DIN EN 1992-1-1/NA 7.4.1: cantilever span = 2.5 x cantilever length
+        return 2.5
+    end
+    return 1
+end
 local function recalc()
     result=nil;summary=nil;export_message=nil
     local info,message=sec_info()
@@ -35,7 +43,7 @@ local function recalc()
     for k,v in pairs(params) do p[k]=v end
     p.q=params.q+(settings.self_weight and q_sw or 0)
     result,err=Beam.solve(p)
-    if result then summary=Beam.summary(result,settings.limit) end
+    if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
     if not result then page=1 end
     return result~=nil
 end
@@ -94,7 +102,7 @@ local function label(gc,t,x,y) gc:drawString(t,x,y,'top') end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.3.2',6,4)
+    label(gc,'BeamCX | EB 2D | v0.3.3',6,4)
 end
 local function name_value(index)
     local key=names[index]
@@ -113,9 +121,16 @@ local function draw_edit(gc,w,h)
         local key=names[i]
         label(gc,key=='support' and 'Supports' or (key=='q' and 'q user' or key),14,y+2)
         local text=(i==edit_index and typing~=nil) and (typing..'_') or name_value(i)
+        if i==6 and section.material~=1 then
+            text=text..' (auto)'
+            local text_w=gc.getStringWidth and gc:getStringWidth(text)
+            if type(text_w)=='number' and 100+text_w>w-84 then
+                gc:setFont('sansserif','r',9)
+            end
+        end
         label(gc,text,100,y+2)
+        gc:setFont('sansserif','r',10)
         if units[i]~='' then label(gc,units[i],w-78,y+2) end
-        if i==6 and section.material~=1 then label(gc,'AUTO',w-114,y+2) end
     end
     if err then
         color(gc,255,140,120);label(gc,err,7,h-46)
@@ -183,14 +198,22 @@ local function draw_results(gc,w,h)
     label(gc,'QUICK CHECK | deflection comparison',7,27)
     label(gc,'|w|max='..fmt(s.w_abs_max)..' mm',7,46)
     label(gc,'x='..fmt(s.x_wmax)..' m',193,46)
-    label(gc,'L/|w|='..(s.ratio and fmt(s.ratio) or 'N/A'),7,64)
+    local ratio_label=s.lref_factor==2.5 and 'Lref/|w|=' or 'L/|w|='
+    label(gc,ratio_label..(s.ratio and fmt(s.ratio) or 'N/A'),7,64)
     label(gc,'L/'..settings.limit..': '..s.status,163,64)
     label(gc,'L/250: '..fmt(s.u250*100)..'%',7,82)
     label(gc,'L/300: '..fmt(s.u300*100)..'%',163,82)
     label(gc,'SW '..(q_sw and (settings.self_weight and 'ON' or 'OFF') or 'N/A')..
         ' | q sw='..(q_sw and fmt(q_sw) or 'N/A')..' kN/m',7,100)
     label(gc,'q total='..fmt(result.p.q)..' kN/m',7,118)
-    if sec_info().kind=='concrete' then
+    if result.p.support==2 then
+        gc:setFont('sansserif','r',9);color(gc,255,200,112)
+        if s.lref_factor==2.5 then
+            label(gc,'Lref=2.5L (EC2/NA)',7,136)
+            label(gc,'RC: GROSS EI ONLY',168,136)
+        else label(gc,'CANTILEVER: AGREE LIMIT',7,136) end
+        gc:setFont('sansserif','r',10)
+    elseif sec_info().kind=='concrete' then
         color(gc,255,200,112);label(gc,'RC: GROSS EI ONLY',7,136)
     end
     color(gc,128,222,181);label(gc,'ENTER: EXPORT CAS',7,h-58)
@@ -288,21 +311,27 @@ local function draw_selector(gc,w,h)
     color(gc,171,193,207)
     label(gc,'ARROWS select | ENTER open',8,h-15)
 end
--- Draw one downward load arrow: shaft stops at the solid triangular head.
+-- Draw one signed load arrow: shaft stops at the solid triangular head.
 -- Pixel-aligned geometry prevents two open V strokes from resembling stacked heads.
-local function load_arrow(gc,xc,top,tip,halfwidth)
+local function load_arrow(gc,xc,tail,tip,halfwidth)
     local x=math.floor(xc+0.5)
-    local base=tip-7
-    gc:drawLine(x,top,x,base)
+    local direction=tip>=tail and 1 or -1
+    local base=tip-7*direction
+    gc:drawLine(x,tail,x,base)
     gc:fillPolygon({x-halfwidth,base,x+halfwidth,base,x,tip})
 end
 local function diagram(gc,w,h)
     local p=result.p
     local left,right=23,w-23
-    local ybeam=66
     local info=sec_info()
     color(gc,215,225,236);gc:setFont('sansserif','r',10)
-    label(gc,presets[p.support]..'  L='..fmt(p.L)..'m  '..info.label,7,29)
+    local title=presets[p.support]..'  L='..fmt(p.L)..'m  '..info.label
+    label(gc,title,7,29)
+    local title_h=gc.getStringHeight and gc:getStringHeight(title)
+    -- Without font metrics, use the 10 pt font plus 4 px for its text box.
+    if type(title_h)~='number' then title_h=10+4 end
+    local title_bottom=29+title_h
+    local ybeam=math.ceil(title_bottom+4+26) -- 4 px clearance, 26 px P arrow
     color(gc,216,228,237);gc:setPen('medium','smooth')
     gc:drawLine(left,ybeam,right,ybeam)
     support(gc,left,ybeam,true,p.support~=1)
@@ -310,21 +339,24 @@ local function diagram(gc,w,h)
     gc:setPen('thin','smooth')
     if p.q~=0 then
         color(gc,230,179,83)
-        gc:drawLine(left,ybeam-23,right,ybeam-23)
+        local qleft,qright=left+10,right-10
+        local qtop=ybeam-18
+        gc:drawLine(qleft,qtop,qright,qtop)
         for i=0,8 do
-            local xx=left+(right-left)*i/8
-            load_arrow(gc,xx,ybeam-23,ybeam-6,3)
+            local xx=qleft+(qright-qleft)*i/8
+            load_arrow(gc,xx,p.q>0 and qtop or ybeam,p.q>0 and ybeam or qtop,3)
         end
     end
     if p.P~=0 then
         local xp=left+(right-left)*p.a/p.L
         color(gc,235,100,105)
-        load_arrow(gc,xp,ybeam-34,ybeam-6,4)
+        load_arrow(gc,xp,p.P>0 and ybeam-26 or ybeam,p.P>0 and ybeam or ybeam-26,4)
     end
     local namesplot={'M [kNm]','V [kN]','w [mm]'}
     color(gc,225,235,246);gc:setPen('thin','smooth')
-    label(gc,namesplot[mode]..'   LEFT/RIGHT: change',8,91)
-    local top,bottom=111,h-50
+    local plot_label_y=math.max(91,ybeam+18)
+    label(gc,namesplot[mode]..'   LEFT/RIGHT: change',8,plot_label_y)
+    local top,bottom=math.max(111,plot_label_y+title_h+2),h-50
     local mid=(top+bottom)/2
     color(gc,115,132,148);gc:drawLine(left,mid,right,mid)
     local data={}
@@ -504,7 +536,7 @@ function on.arrowUp()
     end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
-        if result then summary=Beam.summary(result,settings.limit) end
+        if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
     elseif page==2 then cursor=math.min(1,cursor+0.025)
     else commit();move_field(-1) end
     redraw()
@@ -516,7 +548,7 @@ function on.arrowDown()
     end
     if page==2 and mode==4 then
         settings.limit=settings.limit==250 and 300 or 250
-        if result then summary=Beam.summary(result,settings.limit) end
+        if result then summary=Beam.summary(result,settings.limit,lref_factor()) end
     elseif page==2 then cursor=math.max(0,cursor-0.025)
     else commit();move_field(1) end
     redraw()

@@ -3,13 +3,13 @@
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
 TI-Lua 5.1 app for one prismatic beam span, with support presets, load diagrams, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.3.2 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.3.3 — Quick Beam Check**. A small teaching / engineering-check tool, **not** a design-code verifier.
 
 ## Features
 
 - One horizontal span with four boundary-condition presets: pinned–pinned, fixed–free, fixed–fixed, fixed–pinned.
 - Visual 2×2 system selector with compact supports and reference bending-moment silhouettes for a downward uniform load (`q>0`). These silhouettes illustrate the four support cases; they are not results from the current model.
-- Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards.
+- Uniform load `q` (kN/m) and one point load `P` (kN) at position `a` (m); positive applied loads act downwards, negative loads upwards. Distributed-load arrows follow the calculated total load, including enabled self-weight.
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
 - Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
 - Optional automatic self-weight from steel catalogue mass or concrete rectangle dimensions; **OFF by default**.
@@ -30,6 +30,7 @@ sudo apt install build-essential zlib1g-dev python3 liblua5.4-0
 
 # Once only, if Luna is not already installed:
 git clone https://github.com/ndless-nspire/Luna.git ~/Luna
+git -C ~/Luna checkout a9924a9
 make -C ~/Luna
 
 # From the root of this BeamCX repository:
@@ -45,9 +46,13 @@ luac5.1 -p BeamCX.lua
 lua5.1 tests/quick_check.lua "$PWD"
 ```
 
+Releases are packaged with official **Luna commit `a9924a9`** (`a9924a9a968954eba9adcc161a58ac607f97ce8c`); each release's `.tns` size is recorded in CHANGELOG. The initial v0.3.2 `.tns` (11,938 bytes), reported as generated with another Luna version, stalled N-Link at 91%. Repackaging the same Lua with official Luna `a9924a9` produced a reproducible **12,006-byte** document that transferred and ran on hardware. The clean local Linux build of that commit still produces 11,938 bytes for the earlier Lua, so the hardware-tested package size was not reproduced here; the commit alone does not establish identical output across builds.
+
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
-Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. **v0.3 was tested on a TI-Nspire CX CAS on 2026-11-18** using S235, IPE 300 and `q = 10 kN/m` with automatic self-weight: results, the L/250 deflection comparison and CAS export were checked, including `bx_mmax = 46.8629` read in a Calculator page. **v0.3.2 has not yet been tested on the calculator**; its automated tests simulate the TI canvas and variable API.
+Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. **v0.3 was tested on 2026-11-18** using S235, IPE 300 and `q = 10 kN/m` with automatic self-weight: results, the L/250 deflection comparison and CAS export were checked, including `bx_mmax = 46.8629` read in a Calculator page.
+
+**v0.3.2 was also validated on hardware on 2026-11-18:** selector and silhouettes; returning with Esc; Esc during editing; inert Tab in the selector; retained result after `invalid number` and recovery of EXPORT CAS; saving in the selector. FIX-PIN with `q = 10 kN/m`, `L = 6 m`, `EI = 10,000 kN·m²` gave `RA = 37.5 kN`, `RB = 22.5 kN`, `M(3 m) = 22.5 kNm`, `Mmin = −45 kNm`, `Mmax = 25.313 kNm`, matching the analytical values. **v0.3.3 has not been tested on the calculator**, including transfer of its new package; automated tests simulate the TI canvas and variable API.
 
 ## Keys
 
@@ -61,11 +66,15 @@ New documents open at **SELECT SYSTEM**. Choose a card with the arrows and press
 | `ENTER` | Confirm and open input | Apply numerical input | Open results; in results **EXPORT CAS** | Apply input or toggle selection |
 | `ESC` | No effect | Cancel active edit; otherwise selector | Selector | Cancel active edit; otherwise selector |
 
-In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in **kN·m²**. Numerical `EI` is editable when material is `MANUAL`. In the sections page, choose a material and either a steel profile or concrete dimensions. Use the calculator's normal document save command to retain settings.
+In the input page: `L` and `a` in **m**, `q` in **kN/m**, `P` in **kN**, `EI` in **kN·m²**. Numerical `EI` is editable when material is `MANUAL`; catalogue EI displays `(auto)` beside its value. In the sections page, choose a material and either a steel profile or concrete dimensions. Use the calculator's normal document save command to retain settings.
 
 ### Deflection comparison and self-weight
 
 The compact results view shows `|w|max` in **mm**, its position in **m**, `L/|w|` using consistent length units, and utilization `|w|max / (L / limit)` for both limits. Maxima include all segment boundaries and stationary points of the existing analytical deflection function; they do not depend on plot samples or cursor position. If equal absolute maxima exist, one maximizing position is reported. The selected comparison reports **OK**, **EXCEEDED**, or **N/A** for an undefined ratio (zero deflection). The default limit is L/250. These are user-selected comparison limits, not universal code-compliance certificates.
+
+For **concrete cantilevers**, the comparisons use **`Lref = 2.5 × L`**, following DIN EN 1992-1-1/NA, NCI to **7.4.1(4)** ([official publication, PDF page 144](https://www.niedersachsen.de/download/140002/Nds._MBl._Nr._3_2019_vom_24.01.2019_Anlagenband_1-Teil_1.pdf#page=144)). The screen shows `Lref/|w|` and `Lref=2.5L (EC2/NA)`; utilization is `|w|max / (Lref / limit)`. **This changes the ratio and L/250 / L/300 utilization only for concrete cantilevers**, relative to v0.3.2. It does not change maximum deflection, reactions, moments or exported `bx_` values. The three other support presets continue to use `Lref = L` for every material.
+
+For **steel or MANUAL cantilevers**, `Lref = L` remains the comparison reference and the screen displays **CANTILEVER: AGREE LIMIT**. Cantilever deflection limits must be agreed for the project or supplied by the applicable National Annex; EN 1993-1-1, **7.2**, does not supply a universal equivalent cantilever span. L/250 and L/300 are comparison settings here, not asserted normative cantilever limits.
 
 Choose **Self-weight** on the section page and press `ENTER` or `←` / `→` to switch it ON/OFF. Steel uses `mass [kg/m] × 9.81 / 1000`; concrete uses `25 × (b/1000) × (h/1000)`, both in **kN/m**, positive downward. Input `q user` remains separate; each solve uses `q total = q user + q sw` only when ON. The results view shows available `q sw`, the ON/OFF state and the applied `q total`. With OFF, the displayed available self-weight is not added. Recalculation, section changes and restore never accumulate it. Manual EI or missing weight data show **N/A** and force self-weight OFF. Old saves default to OFF and L/250; both settings persist in new saves.
 
@@ -123,6 +132,7 @@ BeamCX/
 │   ├── test_arrows.py      # One filled arrowhead per load
 │   ├── test_quick_check.py # Quick Beam Check harness
 │   ├── test_selector.py    # Visual selector, reference moments, Esc, restore
+│   ├── test_v033.py        # Signed loads, text bounds, Lref, CAS regression
 │   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
@@ -130,7 +140,7 @@ BeamCX/
 └── README.md
 ```
 
-The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3.2, the full regression scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Selector canvas checks cover 318×212, 320×212 and 320×240, with approximate font widths. These checks do not replace physical-device validation.
+The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3.3, all seven suites' Lua scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
 
 ## Data references
 

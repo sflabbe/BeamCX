@@ -35,11 +35,15 @@ function BeamPreset.at(sol,x,side)
 end
 function BeamPreset.moment_extrema(sol)
     local lo,xlo,hi,xhi=Core.moment_extrema(sol.frame,1)
-    return {minimum={value=lo,position=xlo},maximum={value=hi,position=xhi}}
+    -- A sum of recovery-span coordinates may exceed an end by one ulp.
+    -- Normalize coordinates only; the physical extrema values stay untouched.
+    local L=sol.parameters.L
+    return {minimum={value=lo,position=math.max(0,math.min(L,xlo))},
+            maximum={value=hi,position=math.max(0,math.min(L,xhi))}}
 end
 function BeamPreset.deflection_extrema(sol)
     local w,x=Core.deflection_extrema(sol.frame,1)
-    return {value=w,absolute=math.abs(w),position=x}
+    return {value=w,absolute=math.abs(w),position=math.max(0,math.min(sol.parameters.L,x))}
 end
 function BeamPreset.deflection_check(sol,limit,lref_factor)
     limit=limit==300 and 300 or 250

@@ -69,7 +69,8 @@ def cases():
 def run_beam(inputs, source=ROOT/'src/beam_core.lua', lua=None):
     with tempfile.TemporaryDirectory(prefix='beam-golden-') as tmp:
         output=Path(tmp)/'results.json'
-        code='local Beam=dofile('+literal(str(source))+')\nlocal cases='+literal(inputs)+'\n'
+        minimal=[{key:case[key] for key in ('name','p','limit','lref_factor')} for case in inputs]
+        code='local Beam=dofile('+literal(str(source))+')\nlocal cases='+literal(minimal)+'\n'
         code += r'''
 local function number(v)
     if v=='@nan' then return 0/0 elseif v=='@inf' then return math.huge

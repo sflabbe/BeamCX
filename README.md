@@ -125,7 +125,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 BeamCX/
 ├── src/
 │   ├── beam_core.lua       # Solver and result recovery
-│   ├── beam_preset.lua     # Permanent Frame presets (P2A in progress)
+│   ├── beam_preset.lua     # Permanent Frame presets (not yet used by the app)
 │   ├── frame_core.lua (v0.4-P1C, not yet used by the app)
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
@@ -138,13 +138,21 @@ BeamCX/
 │   ├── test_selector.py    # Visual selector, reference moments, Esc, restore
 │   ├── test_v033.py        # Signed loads, text bounds, Lref, CAS regression
 │   ├── test_beam_preset.py # Physical equivalence against the golden fixture
+│   ├── test_dc_reference.py # Frame vs frozen dc Euler reference
 │   ├── fixtures/beam_v033_golden.json # Frozen v0.3.3 inputs and outputs
+│   ├── fixtures/beam_v033_adjudicated.json # Independent 60-digit references
+│   ├── fixtures/dc_reference.json # Frozen dc Euler reactions/displacements
 │   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
 ├── tools/
 │   ├── make_beam_golden.py # Run: python3 tools/make_beam_golden.py
-│   └── adjudicate_beam_golden.py # Run: python3 tools/adjudicate_beam_golden.py (mpmath, offline)
+│   ├── adjudicate_beam_golden.py # Independent mpmath oracle (offline)
+│   ├── dc_reference.py    # dc fixture generator (offline)
+│   ├── bench_ti.lua      # Independent CX timing screen and PC measurement
+│   └── build_bench.py    # Bundle only bench.lua
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
+├── bench.lua               # Generated independent benchmark
+├── BXBENCH.tns             # Generated benchmark for the calculator
 ├── CHANGELOG.md
 └── README.md
 ```
@@ -153,7 +161,28 @@ The Python tests use standard library `ctypes` to execute actual Lua code agains
 
 ## Benchmark (P2A)
 
-The CX benchmark is pending the P2A numerical-equivalence gate; `bench.lua` and `BXBENCH.tns` have not been generated. Regenerate the frozen v0.3.3 oracle with `python3 tools/make_beam_golden.py`; verify it against the live legacy solver with `python3 tests/test_beam_preset.py --live-beam`. Default preset tests read the golden fixture and do not execute the legacy solver.
+Build and package the independent benchmark with official Luna `a9924a9`:
+
+```bash
+python3 tools/build_bench.py
+~/Luna/luna bench.lua BXBENCH.tns
+# Optional PC CPU reference, using the exact same six models:
+lua5.1 -e "dofile('bench.lua').pc()"
+```
+
+Transfer **BXBENCH.tns** under that plain name into the calculator's root folder and open it. It starts automatically and shows Frame's version/hash, nodes/GDL, solution time and time for 101 recovery calls. Each phase uses at least three repetitions and targets at least 200 ms accumulated measured time (maximum 4096 repetitions). Measurement yields between operations so the screen can update. Painting is excluded. The clock is TI's [`timer.getMilliSecCounter()`](https://education.ti.com/html/eguides/nspire/eg_nspire/en/content/eg_lua/m_libraries/timerlib/getmilliseccounter.HTML), available since API 1.0; 32-bit rollover is handled. PC reference runs use `os.clock` CPU time. No calculator timing is claimed until measured on the device. This build does not change `BeamCX.lua`.
+
+Offline oracle tools (normal tests need neither numpy, dc nor mpmath):
+
+```bash
+# Reproduce the golden into a temporary file; preserve the versioned fixture:
+python3 tools/make_beam_golden.py --output /tmp/beam_v033_golden.json
+python3 tests/test_beam_preset.py --live-beam
+python3 tools/adjudicate_beam_golden.py  # mpmath, 60 digits
+python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc checkout
+```
+
+Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
 
 ## Data references
 

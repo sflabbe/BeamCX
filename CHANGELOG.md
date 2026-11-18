@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- P1C.1: compatibility check scale floored by member end-force reference; fixes false rejection of loads near rigid supports. The end-force/load-based floor is an experimentally validated rounding tolerance, not a rigorous bound. The implied absolute compatibility tolerances are δw = 1e-14·F·L³/EI and δθ = 1e-14·F·L²/EI (about 45 times double-precision machine epsilon times the force reference); near rigid supports, recovery errors below these scales are no longer detected.
+
 ## 0.3.3
 - Load arrows follow the sign of P and calculated total q, including self-weight; one filled head per arrow is retained.
 - Moved loads below the measured diagram title, inset UDL arrows from supports, and kept P longer than q arrows. Catalogue EI now displays `(auto)` in the value column, separate from units.

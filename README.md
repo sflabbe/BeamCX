@@ -125,6 +125,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 BeamCX/
 ├── src/
 │   ├── beam_core.lua       # Solver and result recovery
+│   ├── beam_preset.lua     # Permanent Frame presets (P2A in progress)
 │   ├── frame_core.lua (v0.4-P1C, not yet used by the app)
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
@@ -136,7 +137,12 @@ BeamCX/
 │   ├── test_quick_check.py # Quick Beam Check harness
 │   ├── test_selector.py    # Visual selector, reference moments, Esc, restore
 │   ├── test_v033.py        # Signed loads, text bounds, Lref, CAS regression
+│   ├── test_beam_preset.py # Physical equivalence against the golden fixture
+│   ├── fixtures/beam_v033_golden.json # Frozen v0.3.3 inputs and outputs
 │   └── quick_check.lua     # Analytical checks, self-weight, CAS, UI / persistence
+├── tools/
+│   ├── make_beam_golden.py # Run: python3 tools/make_beam_golden.py
+│   └── adjudicate_beam_golden.py # Run: python3 tools/adjudicate_beam_golden.py (mpmath, offline)
 ├── .github/workflows/ci.yml
 ├── build.py                # Bundle to BeamCX.lua
 ├── CHANGELOG.md
@@ -144,6 +150,10 @@ BeamCX/
 ```
 
 The Python tests use standard library `ctypes` to execute actual Lua code against `liblua5.4.so.0` and a stub TI graphics canvas. `quick_check.lua` also runs directly under **Lua 5.1**. For v0.3.3, all seven suites' Lua scripts passed under Lua 5.4 and Lua 5.1.5; the generated bundle passed the Lua 5.1 syntax check and Luna packaging. Drawing checks cover 318×212, 320×212 and 320×240, with simulated font metrics. On the calculator, load clearance uses `gc:getStringHeight`; without it, a 10 pt font plus a fixed 4 px text-box margin is used. These checks do not replace physical-device validation.
+
+## Benchmark (P2A)
+
+The CX benchmark is pending the P2A numerical-equivalence gate; `bench.lua` and `BXBENCH.tns` have not been generated. Regenerate the frozen v0.3.3 oracle with `python3 tools/make_beam_golden.py`; verify it against the live legacy solver with `python3 tests/test_beam_preset.py --live-beam`. Default preset tests read the golden fixture and do not execute the legacy solver.
 
 ## Data references
 

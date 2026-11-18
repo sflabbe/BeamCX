@@ -855,6 +855,107 @@ print('PASS P1C: '..(rows-p1c_start)..' new numeric rows; 265 previous rows unch
 '''
 
 
+# P1C.1: the mutation exists only in the harness. Restore the original two
+# scale initializers to build the pre-patch control, then alter ONLY span EI.
+core_source = (root / 'src/frame_core.lua').read_text()
+scale_start = core_source.index('    -- End-force reference prevents')
+scale_end = core_source.index('    local function candidate(span,x)', scale_start)
+pre_patch_source = (core_source[:scale_start] +
+                    '    local w_scale=math.max(math.abs(el.u[2]),math.abs(el.u[5]))\n' +
+                    '    local theta_scale=math.max(math.abs(el.u[3]),math.abs(el.u[6]))\n' +
+                    '    local raw_w_scale=w_scale;local raw_theta_scale=theta_scale\n' +
+                    core_source[scale_end:])
+span_marker = 'EI=el.EI,V='
+assert core_source.count(span_marker) == pre_patch_source.count(span_marker) == 1
+mutate = lambda source: source.replace(span_marker, 'EI=el.EI*(1+1e-6),V=', 1)
+script += '\nlocal pre_patch_mutated=' + json.dumps(mutate(pre_patch_source))
+assert core_source.count('return V,M,w,theta') == 1
+script += '\nlocal large_near_mutation=' + json.dumps(core_source.replace('return V,M,w,theta', 'return V,M,w+1e-10,theta', 1))
+script += '\nlocal post_patch_mutated=' + json.dumps(mutate(core_source)) + '\n' + r'''
+assert(rows==394)
+local function end_model(support,kind,a,from_right)
+    local left={node=1,ux=true,uy=true,rz=false}
+    local right={node=2,uy=true,rz=false}
+    if support==1 then left.rz=true -- FIX-PIN
+    elseif support==2 then right.rz=true -- PIN-FIX
+    elseif support==3 then left.rz=true;right.rz=true;right.ux=true
+    elseif support==4 then left.rz=true;right.uy=false
+    elseif support==5 then left.uy=false;right.ux=true;right.rz=true end
+    local load
+    if kind==1 then load={member=1,type='point',a=a,P=-12}
+    elseif kind==2 then load={member=1,type='moment',a=a,M=30}
+    else load={member=1,type='dist',a=from_right and a or 0,b=from_right and 6 or a,q1=-10,q2=-20} end
+    return {nodes={{x=0,y=0},{x=6,y=0}},members={{i=1,j=2,EI=10000,EA=1e8}},
+            supports={left,right},member_loads={load}}
+end
+for _,a in ipairs{1e-7,1e-5,1e-3} do
+    local minimum=assert(Frame.solve(end_model(1,1,a,false)))
+    local ratio=(18-a)/12
+    local normalized=minimum.reactions[2].Ry/(12*(a/6)^2)
+    assert(math.abs(normalized-ratio)<=1e-10*ratio)
+    local RB=12*(a/6)^2*ratio
+    -- P is positive down: clamp reaction Mz=P*a-RB*L;
+    -- the diagram convention is the opposite, M(0)=-Mz.
+    local expected_M=-12*a+RB*6
+    local moment=Frame.at(minimum,1,0).M
+    assert(math.abs(moment/expected_M-1)<=1e-10)
+    print(string.format('P1C.1 CLOSED a=%.17g RB_relative=%.17g M_relative=%.17g',
+        a,math.abs(normalized/ratio-1),math.abs(moment/expected_M-1)))
+end
+local large=assert((loadstring or load)(large_near_mutation,'large near-support mutation'))()
+local rejected,message=large.solve(end_model(1,1,1e-7,false))
+assert(rejected==nil and string.find(message,'member compatibility failed',1,true))
+print('P1C.1 LARGE MUTATION: rejected near support')
+local total,worst=0,0
+for support=1,6 do for kind=1,3 do for _,right in ipairs{false,true} do
+    for exponent=-12,-3 do
+        local distance=10^exponent
+        local a=right and 6-distance or distance
+        local model=end_model(support,kind,a,right)
+        local sol,err=Frame.solve(model)
+        assert(sol,'near support '..support..' kind '..kind..' distance '..distance..': '..tostring(err))
+        assert(sol.checks.compatibility_relative<1e-9)
+        worst=math.max(worst,sol.checks.compatibility_relative);total=total+1
+    end
+end end end
+assert(total==360)
+print(string.format('P1C.1 NEAR: cases=%d rejected=0 worst_compatibility=%.17g',total,worst))
+
+local pair_count,pair_worst=0,0
+for _,support in ipairs{3,1,6} do for _,kind in ipairs{1,2} do
+    for _,x0 in ipairs{1e-6,1e-3,.5,3,5.5} do for _,distance in ipairs{1e-9,1e-7,1e-5,1e-3} do
+        local model=end_model(support,kind,x0,false)
+        local first=model.member_loads[1]
+        model.member_loads[2]=kind==1 and {member=1,type='point',a=x0+distance,P=-first.P}
+                                      or {member=1,type='moment',a=x0+distance,M=-first.M}
+        local sol,err=Frame.solve(model);assert(sol,tostring(err))
+        assert(sol.checks.compatibility_relative<1e-9)
+        local check=sol.checks.compatibility_members[1]
+        assert(check.relative_raw>=check.relative)
+        pair_worst=math.max(pair_worst,check.relative);pair_count=pair_count+1
+    end end
+end end
+assert(pair_count==120)
+print(string.format('P1C.1 PAIRS: cases=%d rejected=0 worst_compatibility=%.17g',pair_count,pair_worst))
+
+local loader=loadstring or load
+local before=assert(loader(pre_patch_mutated,'pre-patch mutation'))()
+local after=assert(loader(post_patch_mutated,'post-patch mutation'))()
+local rejected_before,rejected_after,cases=0,0,0
+for support=1,6 do for kind=1,3 do for a=1,5 do
+    local model=end_model(support,kind,a,false)
+    local old=before.solve(model)
+    local new=after.solve(model)
+    assert((old==nil)==(new==nil),'changed mutation rejection support='..support..' kind='..kind..' a='..a)
+    if not old then rejected_before=rejected_before+1 end
+    if not new then rejected_after=rejected_after+1 end
+    cases=cases+1
+end end end
+assert(cases==90)
+print(string.format('P1C.1 MUTATION: cases=%d rejected_before=%d rejected_after=%d same_cases=true',cases,rejected_before,rejected_after))
+'''
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lua', help='Execute the same chunk with a Lua CLI')

@@ -572,13 +572,27 @@ local function roots_on_span(span,value,visit)
         a,fa=b,fb
     end
 end
-local function compatibility(el,w_end,theta_end)
-    local w_scale=math.max(math.abs(el.u[2]),math.abs(el.u[5]))
-    local theta_scale=math.max(math.abs(el.u[3]),math.abs(el.u[6]))
+local function compatibility(el,w_end,theta_end,member)
+    -- End-force reference prevents a vanishing response from setting the
+    -- entire error scale for loads approaching a rigid support.
+    local L,EI=el.L,el.EI
+    local F_ends=math.max(math.abs(el.f[2]),math.abs(el.f[5]),math.abs(el.f[3])/L,math.abs(el.f[6])/L)
+    local F_loads=math.abs(member.q)*L+EI*math.abs(member.kappa)/L
+    for _,p in ipairs(member.points) do F_loads=F_loads+math.abs(p.P) end
+    for _,p in ipairs(member.moments) do F_loads=F_loads+math.abs(p.M)/L end
+    for _,d in ipairs(member.distributed) do
+        F_loads=F_loads+math.max(math.abs(d.q1),math.abs(d.q2))*(d.right.a-d.left.a)
+    end
+    local F=math.max(F_ends,F_loads)
+    local raw_w_scale=math.max(math.abs(el.u[2]),math.abs(el.u[5]))
+    local raw_theta_scale=math.max(math.abs(el.u[3]),math.abs(el.u[6]))
+    local w_scale=math.max(math.abs(el.u[2]),math.abs(el.u[5]),1e-6*F*L^3/EI)
+    local theta_scale=math.max(math.abs(el.u[3]),math.abs(el.u[6]),1e-6*F*L^2/EI)
     local function candidate(span,x)
         local _,_,w,theta=span_value(span,x)
         if not finite(w) or not finite(theta) then error('ill-conditioned: non-finite recovery',0) end
         w_scale=math.max(w_scale,math.abs(w));theta_scale=math.max(theta_scale,math.abs(theta))
+        raw_w_scale=math.max(raw_w_scale,math.abs(w));raw_theta_scale=math.max(raw_theta_scale,math.abs(theta))
     end
     for _,span in ipairs(el.spans) do
         local function visit(x) candidate(span,x) end
@@ -589,8 +603,10 @@ local function compatibility(el,w_end,theta_end)
     local dw,dt=w_end-el.u[5],theta_end-el.u[6]
     local rw=w_scale==0 and (dw==0 and 0 or math.huge) or math.abs(dw)/w_scale
     local rt=theta_scale==0 and (dt==0 and 0 or math.huge) or math.abs(dt)/theta_scale
+    local raw_w=raw_w_scale==0 and (dw==0 and 0 or math.huge) or math.abs(dw)/raw_w_scale
+    local raw_theta=raw_theta_scale==0 and (dt==0 and 0 or math.huge) or math.abs(dt)/raw_theta_scale
     return {w_residual=dw,rz_residual=dt,w_scale=w_scale,rz_scale=theta_scale,
-            relative=math.max(rw,rt)}
+            relative=math.max(rw,rt),relative_raw=math.max(raw_w,raw_theta)}
 end
 
 local function solve(model)
@@ -654,7 +670,7 @@ local function solve(model)
             if not finite(el.f[i]) then error('ill-conditioned: non-finite end forces',0) end
         end
         local w_end,theta_end=nodal_to_diagram(el,sol.members[el.member])
-        local check=compatibility(el,w_end,theta_end)
+        local check=compatibility(el,w_end,theta_end,sol.members[el.member])
         sol.checks.compatibility_members[el.member]=check
         sol.checks.compatibility_relative=math.max(sol.checks.compatibility_relative,check.relative)
         if check.relative>CHECK_TOL then error(string.format('member compatibility failed: member %d (relative %.6g, dw %.6g, drz %.6g, w scale %.6g, rz scale %.6g)',el.member,check.relative,check.w_residual,check.rz_residual,check.w_scale,check.rz_scale),0) end

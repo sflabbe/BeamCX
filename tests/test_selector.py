@@ -14,13 +14,13 @@ lib.lua_pcallk.restype = ctypes.c_int
 lib.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
 lib.lua_tolstring.restype = ctypes.c_char_p
 lib.lua_close.argtypes = [ctypes.c_void_p]
-script = f"local bundle={str(root / 'BeamCX.lua')!r}\n" + r'''
+script = f"local bundle={str(root / 'BeamCX.lua')!r}\nlocal load_test_bundle=dofile({str(root / 'tests/load_ui.lua')!r})\n" + r'''
 local width,height=320,212
 platform={window={width=function() return width end,height=function() return height end,
     invalidate=function() end}}
 local function fresh()
     on=nil
-    dofile(bundle)
+    load_test_bundle(bundle)
 end
 local function state() return _BX_TEST_STATE() end
 local function eq(a,b)

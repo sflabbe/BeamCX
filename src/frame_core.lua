@@ -20,7 +20,7 @@ local Frame = {}
 
 local PIVOT_TOL = 1e-12 -- |pivot| / original row maximum, after scaled pivoting.
 local CHECK_TOL = 1e-8 -- relative to largest applied force or origin moment.
-local MAX_NODES = 60 -- MODEL nodes only; provisional until CX measurements in P2.
+local MAX_NODES = 20 -- medido en CX CAS (BXBENCH): 20 nudos 2,7 s; 40 nudos 8,8 s; 60 nudos 20,7 s
 
 local function finite(x)
     return type(x)=='number' and x==x and math.abs(x)<math.huge
@@ -459,12 +459,6 @@ local function assemble(model)
             fixed=fixed,prescribed=prescribed,springs=springs,inactive_rotations=inactive_rotations,
             free=free,applied=applied}
 end
-function Frame.assemble(model)
-    local ok,result=pcall(assemble,model)
-    if ok then return result end
-    return nil,result
-end
-
 -- Dense LU, partial pivoting by |a_ik| / max_j |original a_ij|.
 -- Exactly zero row/column or pivot => mechanism; nonzero relative pivot below
 -- 1e-12 => ill-conditioned. Row scaling avoids comparing EA directly to EI.
@@ -683,20 +677,6 @@ function Frame.solve(model)
     return nil,result
 end
 
--- Integrate EI*w^(4)=qa+g*s four times, imposing w=w'=0 at 0,L.
--- The integration constants (before dividing by EI) are
--- C3=-qa*L/2-3*g*L^2/20, C2=qa*L^2/12+g*L^3/30, C1=C0=0.
--- Factoring gives w_p=s^2*(L-s)^2*[5qa+g*(s+2L)]/(120EI), degree 5.
--- Return both w_p and its exact derivative; exposed for the particular test.
-function Frame.load_particular(L,EI,qa,qb,s)
-    if qa==qb then
-        return qa*s^2*(L-s)^2/(24*EI),qa*s*(L-s)*(L-2*s)/(12*EI)
-    end
-    local g=(qb-qa)/L
-    local h=5*qa+g*(s+2*L)
-    return s^2*(L-s)^2*h/(120*EI),
-           (2*s*(L-s)*(L-2*s)*h+g*s^2*(L-s)^2)/(120*EI)
-end
 local function member_result(sol,member)
     if not finite(member) or member%1~=0 or not sol.members[member] then error('invalid member index',0) end
     return sol.members[member]

@@ -18,14 +18,16 @@ for declaration in ('Frame = {}', 'BeamPreset = {}', 'local SectionDB=DB', 'func
                     'function on.save', 'function on.restore'):
     assert declaration in source, declaration
 assert 'Beam.' not in source and 'require(' not in source
+assert '_BX_TEST_STATE' not in source and 'load_particular' not in source
 assert not (root/'src/beam_core.lua').exists()
 script = 'local bundle=' + builder.literal(str(root/'BeamCX.lua')) + '\n'
 script += 'local resolved=' + builder.literal(resolved) + '\n'
+script += 'local load_test_bundle=dofile(' + builder.literal(str(root/'tests/load_ui.lua')) + ')\n'
 script += r'''
 local width,height=318,212
 platform={window={width=function() return width end,height=function() return height end,
     invalidate=function() end}}
-dofile(bundle)
+load_test_bundle(bundle)
 local function eq(a,b)
     assert(type(a)=='number' and math.abs(a-b)<=1e-9*math.max(1e-10,math.abs(b)),
         tostring(a)..' != '..tostring(b))

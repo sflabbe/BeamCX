@@ -612,12 +612,3 @@ function on.restore(data)
     if type(data.mode)=='number' and data.mode>=1 and data.mode<=4 then mode=data.mode end
     if type(data.cursor)=='number' and data.cursor>=0 and data.cursor<=1 then cursor=data.cursor end
 end
-
--- Read-only test snapshot. Result / summary references allow rollback identity
--- checks; this accessor does not modify app state and is not part of the UI.
-function _BX_TEST_STATE()
-    return {page=page,sel_index=sel_index,selector_error=selector_error,
-        support=params.support,EI=params.EI,result=result,summary=summary,err=err,
-        export_message=export_message,q_sw=q_sw,self_weight=settings.self_weight,
-        typing=typing}
-end

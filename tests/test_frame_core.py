@@ -11,7 +11,17 @@ from pathlib import Path
 import subprocess
 
 root = Path(__file__).resolve().parent.parent
-script = f"local Frame=dofile({str(root / 'src/frame_core.lua')!r})\n" + r'''
+core_source = (root / 'src/frame_core.lua').read_text()
+assert core_source.rstrip().endswith('return Frame')
+# Test-only access to assembly internals, injected in the module's lexical scope.
+snapshot_source = core_source[:core_source.rfind('return Frame')] + r'''
+return Frame,function(model)
+    local ok,result=pcall(assemble,model)
+    if ok then return result end
+    return nil,result
+end
+'''
+script = 'local Frame,assembly_snapshot=assert((loadstring or load)(' + json.dumps(snapshot_source) + '))()\n' + r'''
 print('RUNTIME '.._VERSION)
 local rows=0
 local max_equilibrium,max_residual=0,0
@@ -82,7 +92,7 @@ local c,s=math.sqrt(3)/2,0.5
 local T={{c,s,0,0,0,0},{-s,c,0,0,0,0},{0,0,1,0,0,0},
          {0,0,0,c,s,0},{0,0,0,-s,c,0},{0,0,0,0,0,1}}
 local model={nodes={{x=0,y=0},{x=2*c,y=2*s}},members={{i=1,j=2,EA=4200000000,EI=105000000}}}
-local asm=assert(Frame.assemble(model))
+local asm=assert(assembly_snapshot(model))
 maxerr=0
 local TT=Frame.transformation(c,s)
 for i=1,6 do for j=1,6 do
@@ -95,7 +105,7 @@ eq('E2 rotation max relative',maxerr,0,1e-12)
 -- E3: two rigid translations and rotation r=(-y,x,1), including free portal.
 for mi,m in ipairs{model,portal(false)} do
     m.supports={}
-    local a=assert(Frame.assemble(m))
+    local a=assert(assembly_snapshot(m))
     local norm=0
     for i=1,a.ndof do
         local r=0;for j=1,a.ndof do r=r+math.abs(a.K[i][j]) end
@@ -248,7 +258,7 @@ eq('merged interior V jump',l.V-r.V,12)
 -- Points near ends retain their exact positions; no extra nodes.
 sol=solve(beam(1,nil,6-1e-7));assert(#sol.nodes==2)
 eq('23 merged right B',sol.reactions[2].Ry,12*(6-1e-7)/6)
-local aa=assert(Frame.assemble(beam(1,nil,6e-6)));assert(#aa.nodes==2)
+local aa=assert(assembly_snapshot(beam(1,nil,6e-6)));assert(#aa.nodes==2)
 assert(pcall(Frame.at,sol,1,6));assert(not pcall(Frame.at,sol,1,6,'right'))
 assert(not pcall(Frame.at,sol,1,-1));assert(not pcall(Frame.at,sol,1,3,'bad'))
 -- Reversed member orientation preserves physical nodal solutions.
@@ -257,14 +267,13 @@ sol=solve(m);eq('reversed global Ry',sol.reactions[1].Ry,30)
 eq('reversed local w',Frame.at(sol,1,3).w,.016875)
 -- All supports prescribed / unloaded zero response.
 sol=solve(beam(1,nil,nil,'fixed'));w,x=Frame.deflection_extrema(sol,1);eq('zero w',w,0)
--- Performance: three spans with one interior point in each, then exactly
--- originally 60 nodes after partition; now exactly the 30 model nodes.
+-- Performance: three spans with interior points, then the 20-model-node CX guard.
 m=beam(3,{true,true,true})
 for i=1,3 do m.member_loads[#m.member_loads+1]={member=i,type='point',a=2,P=-12} end
 local t=os.clock();sol=solve(m);local elapsed=os.clock()-t
 print(string.format('PERF 3 spans: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
 m={nodes={},members={},supports={},member_loads={}}
-for i=1,30 do
+for i=1,20 do
     m.nodes[i]={x=(i-1)*6,y=0}
     m.supports[i]={node=i,ux=i==1,uy=true}
     if i>1 then
@@ -274,11 +283,12 @@ for i=1,30 do
 end
 m.member_loads[#m.member_loads+1]={member=1,type='point',a=4,P=-12}
 t=os.clock();sol=solve(m);elapsed=os.clock()-t
-assert(#sol.nodes==30)
-print(string.format('PERF 60 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
+assert(#sol.nodes==20)
+print(string.format('PERF 20 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
 m.member_loads[#m.member_loads+1]={member=2,type='point',a=4,P=-12}
-for i=31,61 do m.nodes[i]={x=6*(i-1),y=0} end
-fail(m,'model too large for handheld')
+m.nodes[21]={x=120,y=0}
+assert(fail(m,'model too large for handheld')=='model too large for handheld')
+print('PASS handheld guard: 20 nodes solve; 21 rejected with exact message')
 print(string.format('CHECKS max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
 print('PASS P1A: '..rows..' numeric oracles, contracts, checks and performance')
 -- P1B: append-only numeric oracles; the 85 P1A numeric checks above remain.
@@ -412,9 +422,10 @@ for _,a in ipairs{-1,7} do
 end
 -- C4: recover the PARTICULAR polynomial independently by six-point Lagrange
 -- interpolation; differentiate the recovered coefficients analytically.
--- This checks the production helper, not a second implementation of it.
+-- Frame.at on an equivalent fixed-fixed member supplies the physical polynomial.
 for index,pair in ipairs{{-3,-11},{11,-2},{-10,-10}} do
     local L,EI=6,1e4
+    local particular=solve(linear_beam(pair[1],pair[2],'fixed'))
     local coeff={}
     for i=0,5 do coeff[i]=0 end
     for j=0,5 do
@@ -428,7 +439,7 @@ for index,pair in ipairs{{-3,-11},{11,-2},{-10,-10}} do
             end
             basis=next_basis;degree=degree+1;denom=denom*(j-k)/5
         end end
-        local wp=Frame.load_particular(L,EI,pair[1],pair[2],L*j/5)
+        local wp=Frame.at(particular,1,L*j/5).w
         for p=0,5 do coeff[p]=coeff[p]+wp*basis[p]/denom end
     end
     for j=0,4 do
@@ -437,9 +448,10 @@ for index,pair in ipairs{{-3,-11},{11,-2},{-10,-10}} do
             pair[1]+(pair[2]-pair[1])*t)
     end
     for _,s in ipairs{0,L} do
-        local wp,dwp=Frame.load_particular(L,EI,pair[1],pair[2],s)
+        local wp,dwp=Frame.at(particular,1,s).w,0
+        for p=1,5 do dwp=dwp+p*coeff[p]*(s/L)^(p-1)/L end
         eq('C4 '..index..' w('..s..')',wp,0);eq('C4 '..index..' dw('..s..')',dwp,0)
-        assert(wp==0 and dwp==0)
+        assert(particular.u[s==0 and 2 or 5]==0 and particular.u[s==0 and 3 or 6]==0)
     end
 end
 -- Two real shear roots, sign-changing q and ZERO resultant (finite couple).
@@ -487,9 +499,9 @@ sol=solve(linear_beam(-10,-20,nil,2,2+1e-7))
 local short_length=(2+1e-7)-2
 local short_B=(2*15*short_length+short_length^2*50/6)/6
 eq('collapsed dist A',sol.reactions[1].Ry,15*short_length-short_B);eq('collapsed dist B',sol.reactions[2].Ry,short_B)
--- Former 60-node partition model: now exactly 30 original nodes.
+-- Loaded partition/recovery regression at the 20-model-node CX guard.
 m={nodes={},members={},supports={},member_loads={}}
-for i=1,30 do
+for i=1,20 do
     m.nodes[i]={x=(i-1)*6,y=0};m.supports[i]={node=i,ux=i==1,uy=true}
     if i>1 then
         m.members[i-1]={i=i-1,j=i,EA=1e8,EI=1e4}
@@ -498,8 +510,8 @@ for i=1,30 do
     end
 end
 m.member_loads[#m.member_loads+1]={member=1,type='moment',a=4,M=30}
-t=os.clock();sol=solve(m);elapsed=os.clock()-t;assert(#sol.nodes==30)
-print(string.format('PERF P1B 60 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
+t=os.clock();sol=solve(m);elapsed=os.clock()-t;assert(#sol.nodes==20)
+print(string.format('PERF P1B 20 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
 print(string.format('CHECKS P1B max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
 print('PASS P1B: '..(rows-p1a_rows)..' new numeric oracles; 85 P1A preserved')
 '''
@@ -601,10 +613,10 @@ Frame.local_k=function(L,EA,EI) return original_k(L,EA,2*EI) end
 local no_result,compat_error=Frame.solve(beam(1,{true}))
 Frame.local_k=original_k
 assert(no_result==nil and string.find(compat_error,'member compatibility failed',1,true))
--- 60 MODEL nodes, several loads per member: P1A-like and P1B-like cases.
+-- 20 MODEL nodes, several loads per member: P1A-like and P1B-like cases.
 for _,kind in ipairs{'P1A','P1B'} do
     m={nodes={},members={},supports={},member_loads={}}
-    for i=1,60 do
+    for i=1,20 do
         m.nodes[i]={x=6*(i-1),y=0};m.supports[i]={node=i,ux=i==1,uy=true}
         if i>1 then
             local member=i-1
@@ -621,8 +633,8 @@ for _,kind in ipairs{'P1A','P1B'} do
         end
     end
     t=os.clock();sol=solve_compatible(m);elapsed=os.clock()-t
-    assert(sol.ndof==180)
-    print(string.format('PERF P1B.1 %s 60 model nodes: nodes=%d dofs=%d free=%d seconds=%.6f compatibility=%.6g',
+    assert(sol.ndof==60)
+    print(string.format('PERF P1B.1 %s 20 model nodes: nodes=%d dofs=%d free=%d seconds=%.6f compatibility=%.6g',
         kind,#sol.nodes,sol.ndof,#sol.free,elapsed,sol.checks.compatibility_relative))
 end
 print('PASS P1B.1: two HP fixtures, close loads, model-only DOFs, endpoint tolerance and compatibility')
@@ -834,13 +846,13 @@ for _,key in ipairs{'dx','dy','drz'} do
 end
 m=thermal();m.member_loads[1].dT=math.huge;fail(m,'invalid dT')
 m=beam(1);m.members[1].hinge_i=1;fail(m,'invalid hinge_i')
--- Performance: 60 model nodes, Gerber-like one-ended releases and positive
+-- Performance: 20 model nodes, Gerber-like one-ended releases and positive
 -- vertical springs at all interior nodes; springs stabilize every released span.
 m={nodes={},members={},supports={},member_loads={}}
-for i=1,60 do
+for i=1,20 do
     m.nodes[i]={x=6*(i-1),y=0}
     if i==1 then m.supports[#m.supports+1]={node=i,ux=true,uy=true,rz=true}
-    elseif i==60 then m.supports[#m.supports+1]={node=i,uy=true}
+    elseif i==20 then m.supports[#m.supports+1]={node=i,uy=true}
     else m.supports[#m.supports+1]={node=i,ky=5000} end
     if i>1 then
         m.members[i-1]={i=i-1,j=i,EI=1e4,EA=1e8,hinge_j=true}

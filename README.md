@@ -121,7 +121,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 - Linear, small-deflection, prismatic Euler–Bernoulli analysis; self-weight is included only when explicitly switched ON. No load combinations or resistance checks.
 - **Concrete:** `Ecm` with **gross uncracked** rectangular inertia only. Displayed deflections are **not** cracked/creep-adjusted reinforced-concrete service deflections. No reinforcement or EC2 design verification.
 - Steel profile values are nominal and not geometric/material strength checks; neither steel nor concrete code verification is performed.
-- The five independently resolved legacy failures now solve through Frame, including loads near supports. Existing numerical guards and the 60-node engine limit remain unchanged.
+- The five independently resolved legacy failures now solve through Frame, including loads near supports. The engine limit is 20 model nodes, based on the CX CAS measurements below; numerical checks remain unchanged.
 - If `P != 0`, changing `L` below the existing position `a` is rejected until `a` is adjusted.
 - No warranty of fitness for structural design: independently verify results for engineering use.
 
@@ -192,7 +192,7 @@ Existing BXBENCH solve-time references (P2A closed):
 | 40 nodes | 8830 ms |
 | 60 nodes | 20670 ms |
 
-The 60-node numerical guard remains. No new performance threshold or confirmation screen is introduced.
+The numerical guard permits 20 model nodes; 21 or more return `model too large for handheld`. No new performance threshold or confirmation screen is introduced.
 
 Offline oracle tools (normal tests need neither numpy, dc nor mpmath):
 

@@ -14,11 +14,11 @@ lib.lua_pcallk.restype = ctypes.c_int
 lib.lua_tolstring.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
 lib.lua_tolstring.restype = ctypes.c_char_p
 lib.lua_close.argtypes = [ctypes.c_void_p]
-script = f"local bundle={str(root / 'BeamCX.lua')!r}\n" + r'''
+script = f"local bundle={str(root / 'BeamCX.lua')!r}\nlocal load_test_bundle=dofile({str(root / 'tests/load_ui.lua')!r})\n" + r'''
 local width,height=318,212
 platform={window={width=function() return width end,height=function() return height end,
     invalidate=function() end}}
-dofile(bundle)
+load_test_bundle(bundle)
 local function eq(a,b)
     assert(type(a)=='number' and math.abs(a-b)<1e-9*math.max(1,math.abs(b)),
         tostring(a)..' != '..tostring(b))

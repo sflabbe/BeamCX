@@ -6,7 +6,7 @@
 - **Result change only for concrete cantilevers:** `Lref = 2.5·L` per DIN EN 1992-1-1/NA 7.4.1 changes `u250`, `u300` and `Lref/|w|`. Physical deflection, reactions, moments and the eight `bx_` variables are unchanged. Other supports still use L.
 - Steel and MANUAL cantilevers retain `Lref = L` and display `CANTILEVER: AGREE LIMIT`; project / National Annex limits apply (EN 1993-1-1, 7.2).
 - Added Lua 5.1 syntax and analytical/UI checks to CI, plus signed-load, layout, reference-length and CAS regressions.
-- Package: **12,465 bytes**, official Luna commit **`a9924a9`**, rebuilt from source; identical output in two local packaging runs. Not yet tested on hardware or transferred by N-Link.
+- Package: **12,465 bytes**, official Luna commit **`a9924a9`**, rebuilt from source; identical output in two local packaging runs. TI-Nspire CX CAS hardware-tested 2026-11-18; the classic-zlib package transferred fine under a plain file name in the root folder.
 
 ## 0.3.2
 - Added a visual 2×2 support-system selector with compact schematics and reference M silhouettes for a downward uniform load (`q>0`), independent of the current model.
@@ -15,7 +15,7 @@
 - Preserved legacy document pages, loads and sections; selector saves restore focus to the confirmed support without adding saved fields.
 - Added reference-formula, drawing-sign, layout, no-solve repaint, Esc/CAS recovery and persistence checks.
 - Hardware validation: TI-Nspire CX CAS OS 4.5.5.79 on 2026-11-18; selector / silhouettes, Esc / editing, inert Tab, invalid-number recovery / CAS export, selector save, and analytical FIX-PIN results verified.
-- Hardware-tested package: **12,006 bytes**, official Luna **`a9924a9`**. Initial 11,938-byte package stalled N-Link at 91%; see README for the local-build size discrepancy.
+- Hardware-tested package: **12,006 bytes**, official Luna **`a9924a9`**. Luna uses the system zlib: classic zlib and zlib-ng produced valid 11,938- and 12,006-byte packages from the same script; size is not a cross-machine build check. One v0.3.2 upload stalled N-Link at 91 % using `BeamCX_0.3.tns` in `Apps` with classic zlib; the successful upload used a plain name in the root folder with zlib-ng. The cause was not isolated. The classic-zlib v0.3.3 package later transferred fine with a plain name in the root folder. Recommended: plain names without extra dots (e.g. `BeamCX033.tns`) and the root folder; see README.
 
 ## 0.3
 - Added analytical maximum absolute deflection and position, span/deflection ratio, L/250 and L/300 utilization and selectable comparison status.

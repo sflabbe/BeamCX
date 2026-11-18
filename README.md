@@ -46,13 +46,15 @@ luac5.1 -p BeamCX.lua
 lua5.1 tests/quick_check.lua "$PWD"
 ```
 
-Releases are packaged with official **Luna commit `a9924a9`** (`a9924a9a968954eba9adcc161a58ac607f97ce8c`); each release's `.tns` size is recorded in CHANGELOG. The initial v0.3.2 `.tns` (11,938 bytes), reported as generated with another Luna version, stalled N-Link at 91%. Repackaging the same Lua with official Luna `a9924a9` produced a reproducible **12,006-byte** document that transferred and ran on hardware. The clean local Linux build of that commit still produces 11,938 bytes for the earlier Lua, so the hardware-tested package size was not reproduced here; the commit alone does not establish identical output across builds.
+Releases are packaged with official **Luna commit `a9924a9`**. Luna compresses with the system zlib, so `.tns` sizes differ between machines (classic zlib vs. zlib-ng: e.g. 11,938 vs. 12,006 bytes for the same v0.3.2 script); both are valid, and size is not a cross-machine build check. One upload of v0.3.2 stalled N-Link at 91 %. That attempt used the file name `BeamCX_0.3.tns` (extra dot), the `Apps` folder and the classic-zlib build; the transfer that worked used a plain name, the root folder and the zlib-ng build. The cause was not isolated. The classic-zlib v0.3.3 build later transferred fine under a plain name in the root folder. Recommended practice: plain file names without extra dots (e.g. `BeamCX033.tns`) and the root folder.
 
 The generated `BeamCX.tns` can be transferred using [N-Link Web](https://n-link.lights0123.com/) in Chrome/Chromium. Open it under **My Documents** on the TI-Nspire. The generated `.lua` and `.tns` files are ignored by Git. **Do not use** N-Link's *Upload OS* button for a `.tns` document.
 
 Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.79**. **v0.3 was tested on 2026-11-18** using S235, IPE 300 and `q = 10 kN/m` with automatic self-weight: results, the L/250 deflection comparison and CAS export were checked, including `bx_mmax = 46.8629` read in a Calculator page.
 
-**v0.3.2 was also validated on hardware on 2026-11-18:** selector and silhouettes; returning with Esc; Esc during editing; inert Tab in the selector; retained result after `invalid number` and recovery of EXPORT CAS; saving in the selector. FIX-PIN with `q = 10 kN/m`, `L = 6 m`, `EI = 10,000 kN·m²` gave `RA = 37.5 kN`, `RB = 22.5 kN`, `M(3 m) = 22.5 kNm`, `Mmin = −45 kNm`, `Mmax = 25.313 kNm`, matching the analytical values. **v0.3.3 has not been tested on the calculator**, including transfer of its new package; automated tests simulate the TI canvas and variable API.
+**v0.3.2 was also validated on hardware on 2026-11-18:** selector and silhouettes; returning with Esc; Esc during editing; inert Tab in the selector; retained result after `invalid number` and recovery of EXPORT CAS; saving in the selector. FIX-PIN with `q = 10 kN/m`, `L = 6 m`, `EI = 10,000 kN·m²` gave `RA = 37.5 kN`, `RB = 22.5 kN`, `M(3 m) = 22.5 kNm`, `Mmin = −45 kNm`, `Mmax = 25.313 kNm`, matching the analytical values.
+
+**v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
 
 ## Keys
 
@@ -123,6 +125,7 @@ The same beam with S235 and IPE 200 uses `E = 210,000 MPa` and `Iy = 1,943 cm⁴
 BeamCX/
 ├── src/
 │   ├── beam_core.lua       # Solver and result recovery
+│   ├── frame_core.lua (v0.4-P1A, not yet used by the app)
 │   ├── section_db.lua      # Offline materials, IPE / HEA Iy and mass
 │   └── beam_ui.lua         # TI-Lua painting, keys, persistence
 ├── tests/

@@ -95,6 +95,10 @@ class Reference:
             F[3] += p['H']
             fixed = {0, 1, 9, 10} | ({2, 11} if p['base'] == 'FIX' else set())
             free = [d for d in range(12) if d not in fixed]
+            # Retain this independently assembled system for diagnostics only.
+            self.free = free
+            self.Kfree = [[K[i][j] for j in free] for i in free]
+            self.Ffree = [F[i] for i in free]
             u = [D(0)]*12
             for d, value in zip(free, linear_solve([[K[i][j] for j in free] for i in free], [F[i] for i in free])):
                 u[d] = value
@@ -103,6 +107,29 @@ class Reference:
             for m in self.members:
                 m['u'] = [row[0] for row in multiply(m['T'], [[u[d]] for d in m['dofs']])]
                 m['f'] = [sum(row[j]*m['u'][j] for j in range(6))-m['fe'][i] for i, row in enumerate(m['k'])]
+
+    def conditioning(self):
+        """Infinity-norm conditioning in the original m/kN/radian DOFs.
+
+        Rational inversion is a diagnostic using the existing SymPy dependency,
+        never a replacement solution path. Scaling uses S_ii=1/sqrt(K_ii):
+        Kscaled=S*Kfree*S, with inverse S^-1*Kfree^-1*S^-1.
+        """
+        with localcontext() as ctx:
+            ctx.prec = 50
+            matrix = sp.Matrix([[sp.Rational(str(v)) for v in row] for row in self.Kfree])
+            inverse = matrix.inv()
+            inv = [[D(str(sp.N(v, 50))) for v in row] for row in inverse.tolist()]
+            norm = lambda a: max(sum(abs(v) for v in row) for row in a)
+            diagonal = [self.Kfree[i][i].sqrt() for i in range(len(self.free))]
+            scaled = [[v/(diagonal[i]*diagonal[j]) for j, v in enumerate(row)]
+                      for i, row in enumerate(self.Kfree)]
+            scaled_inv = [[v*diagonal[i]*diagonal[j] for j, v in enumerate(row)]
+                          for i, row in enumerate(inv)]
+            return dict(kappa=norm(self.Kfree)*norm(inv),
+                        kappa_scaled=norm(scaled)*norm(scaled_inv),
+                        matrix=self.Kfree, load=self.Ffree, free=[d+1 for d in self.free],
+                        matrix_norm=norm(self.Kfree), load_norm=max(map(abs, self.Ffree)))
 
     def at(self, member, s, side='left'):
         with localcontext() as ctx:
@@ -114,6 +141,7 @@ class Reference:
             distance = max(D(0), s-a)
             return dict(N=-f[0], V=f[1]+q*s+(P if crossed else 0),
                         M=-f[2]+f[1]*s+q*s*s/2+P*distance,
+                        u=u[0]+s/m['L']*(u[3]-u[0]),
                         w=u[1]+u[2]*s+(-f[2]*s*s/2+f[1]*s**3/6+q*s**4/24+P*distance**3/6)/EI)
 
     def relative(self, s):
@@ -157,5 +185,6 @@ class Reference:
 
     def export(self):
         return dict(reactions=[dict(H=self.reactions[d], V=self.reactions[d+1], M=self.reactions[d+2]) for d in (0, 9)],
+                    nodal_displacements=self.u,
                     drift=dict(left=self.u[3], right=self.u[6]), deflection=self.deflection(),
                     members=[dict(moments=self.extrema(i), N=self.at(i, 0)['N']) for i in range(1, 4)])

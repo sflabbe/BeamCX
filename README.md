@@ -262,6 +262,17 @@ python3 tools/dc_reference.py ~/dinamica-computacional  # numpy + local dc check
 
 The retained P2A comparison rules distinguish **2,009 ordinary equivalent cases, two independently adjudicated cases, five RESOLVED legacy failures and 26 invalid inputs**. P2B consumes these fixtures without regenerating them or changing the numerical authority. Global equivalence uses `S_X = max(case response magnitudes, 1e-6·X_ref)`, with `F=|q|L+|P|`, `V_ref=F`, `M_ref=FL` and `w_ref=FL³/EI`. It is not a precision bound for nearly zero responses. The tiny FIX-PIN deflection has its own nonzero oracle; support zeros are checked in prescribed nodal DOFs. The adjudicated fixture is separate from the untouched golden. The dc generator explicitly uses Euler–Bernoulli and compares reactions/displacements only, with N→kN conversion; only horizontal members carry its uniform loads.
 
+The calculation-only rectangular portal preset (P6A, pending P6B integration) uses
+`EA = 1e6 * EI / L²` to approximate negligible axial deformation. Finite-EA
+approximation error and floating-point roundoff are distinct; neither has a
+universal bound for every geometry. The independent random-model tests use
+`max(1e-9, 10·κ∞(Kfree)·epsilon)` for displacement comparisons only, with a
+qualification limit of `1e-6`; force, moment and equilibrium thresholds stay at
+`1e-9`. Conditioning depends on matrix units and scaling. This is a linear
+elastic first-order model without second-order stability analysis. Large drifts
+in extreme random cases are numerical stress tests and need not represent valid
+small-displacement engineering configurations. See [P6A validation](VALIDATION_P6A.md).
+
 ## Continuous-beam calculation (P5A / P5A.1)
 
 The productive `ContinuousPreset` handles 2–5 spans (definitive `MAX_SPANS=5`), PIN/FIX ends, continuous rotations over intermediate vertical supports, one EI, and full-span uniform g/q loads. Supply self-weight once as part of g. P5B connects these calculations to the selector, shared sections, persistent input, plots, tables and `bc_*` export. Point loads remain exclusive to the single-span presets.

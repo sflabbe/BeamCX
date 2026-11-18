@@ -59,9 +59,15 @@ for index in range(50):
     for support in ('PIN', 'FIX'):
         add(f'random {index:02d} {support}', base=support, **p)
 
+assert len(inputs) == 136
 for case in inputs:
     reference = Reference(case['p'])
     case['ref'] = reference.export()
+    case['diagnostics'] = reference.conditioning()
+    case['displacement_tol'] = 1e-9
+    if case['name'].startswith('random '):
+        case['displacement_tol'] = max(1e-9, 10*float(case['diagnostics']['kappa'])*2.220446049250313e-16)
+        assert case['displacement_tol'] <= 1e-6, f"STOP: outside qualified domain: {case['name']}"
     p = case['p']
     # Independent equilibrium, using physical loads and support positions.
     rx = reference.reactions
@@ -91,11 +97,32 @@ script += 'local Portal=dofile('+builder.literal(str(root/'src/portal_preset.lua
 script += 'local cases='+builder.literal(inputs)+'\n'
 script += r'''
 local errors={}
+local worst={}
 local current_case=''
+local model_errors={}
+local function category(group)
+    if group=='drift' or group=='nodal translation' or group=='sample w' or group=='sample u'
+        or group=='relative deflection' or group=='relative signed' or group=='relative position value' then return 'D' end
+    if group=='nodal rotation' then return 'rotation' end
+    if group:find('axial',1,true) or group=='sample N' then return 'N' end
+    if group=='reaction H' or group=='reaction V' then return 'R' end
+    if group=='sample V' then return 'V' end
+    if group=='sample M' or group=='reaction M' or group:find('moment',1,true) then return 'M' end
+    return 'other'
+end
 local function eq(group,got,want,scale,tol)
     assert(type(got)=='number' and got==got,group..' not finite')
     local err=math.abs(got-want)/math.max(scale or math.abs(want),1e-300)
     errors[group]=math.max(errors[group] or 0,err)
+    local key=category(group)
+    local entry=model_errors[key] or {absolute=0,relative=0}
+    entry.absolute=math.max(entry.absolute,math.abs(got-want))
+    entry.relative=math.max(entry.relative,err)
+    model_errors[key]=entry
+    local overall=worst[group] or {relative=0,absolute=0,relative_case=current_case,absolute_case=current_case}
+    if err>overall.relative then overall.relative=err;overall.relative_case=current_case end
+    if math.abs(got-want)>overall.absolute then overall.absolute=math.abs(got-want);overall.absolute_case=current_case end
+    worst[group]=overall
     assert(err<=(tol or 1e-9),current_case..' '..group..string.format(': %.17g != %.17g relative=%.6g',got,want,err))
 end
 local function semantic(t)
@@ -113,9 +140,12 @@ local function equilibrium(p,r)
         -p.q*p.l^2/2-p.P*p.a-p.H*p.h-p.w*p.h^2/2,0,F*math.max(p.h,p.l))
 end
 local points,oracles,chord_witnesses=0,0,0
+local solutions={}
 for _,case in ipairs(cases) do
     current_case=case.name
+    model_errors={}
     local p,ref=case.p,case.ref
+    local dtol=case.displacement_tol
     local F=math.abs(p.q*p.l)+math.abs(p.P)+math.abs(p.H)+math.abs(p.w*p.h)
     local scale=F>0 and F or 1
     local length=math.max(p.h,p.l)
@@ -129,21 +159,28 @@ for _,case in ipairs(cases) do
     local sol,err=Portal.solve(p)
     Frame.solve=solve
     assert(sol,case.name..': '..tostring(err));assert(count==1)
+    solutions[case.name]=sol
     equilibrium(p,sol.reactions)
     for i,side in ipairs{'left','right'} do
         for _,key in ipairs{'H','V','M'} do
             if key=='M' and p.base=='PIN' then assert(sol.reactions[side].M==nil)
             else eq('reaction '..key,sol.reactions[side][key],ref.reactions[i][key],key=='M' and mscale or scale) end
         end
-        eq('drift',sol.drift[side],ref.drift[side],dscale)
+        eq('drift',sol.drift[side],ref.drift[side],dscale,dtol)
+    end
+    for d=1,12 do
+        local rotation=d%3==0
+        eq(rotation and 'nodal rotation' or 'nodal translation',sol.frame.u[d],ref.nodal_displacements[d],
+            rotation and dscale/length or dscale,dtol)
     end
     for _,point in ipairs(case.points) do
         local got=sol.at(point.member,point.s,point.side)
         local delegated=Frame.at(sol.frame,point.member,point.s,point.side)
-        for _,key in ipairs{'N','V','M','w'} do
+        for _,key in ipairs{'N','V','M','w','u'} do
             assert(got[key]==delegated[key])
+            local displacement=key=='w' or key=='u'
             eq('sample '..key,got[key],point.value[key],key=='M' and mscale or
-                (key=='w' and math.max(dscale,wscale) or scale))
+                (displacement and math.max(dscale,wscale) or scale),displacement and dtol or 1e-9)
         end
         points=points+1
     end
@@ -160,9 +197,9 @@ for _,case in ipairs(cases) do
     local w0,wL=sol.at(2,0).w,sol.at(2,p.l).w
     local s=sol.deflection.position
     local relative=sol.at(2,s).w-(1-s/p.l)*w0-s/p.l*wL
-    eq('relative deflection',sol.deflection.absolute,ref.deflection.absolute,wscale)
-    eq('relative signed',sol.deflection.value,ref.deflection.value,wscale)
-    eq('relative position value',relative,ref.deflection.value,wscale)
+    eq('relative deflection',sol.deflection.absolute,ref.deflection.absolute,wscale,dtol)
+    eq('relative signed',sol.deflection.value,ref.deflection.value,wscale,dtol)
+    eq('relative position value',relative,ref.deflection.value,wscale,dtol)
     -- Position is unique in this asymmetric witness; also detects a search
     -- that corrects w at the old absolute-w stationary points only.
     if case.name:find('asymmetric chord',1,true) then
@@ -222,7 +259,95 @@ for _,case in ipairs(cases) do
         print(string.format('ORACLE | %s | analytical=%.12g | finite_EA=%.12g',case.name,analytical,finite_error))
         oracles=oracles+1
     end
+    -- Relative backward residual from the INDEPENDENT reference assembly.
+    -- All norms are infinity norms; evaluation here is binary64 in both Lua.
+    local diag=case.diagnostics
+    local residual,unorm=0,0
+    for _,d in ipairs(diag.free) do unorm=math.max(unorm,math.abs(sol.frame.u[d])) end
+    for i,row in ipairs(diag.matrix) do
+        local r=-diag.load[i]
+        for j,d in ipairs(diag.free) do r=r+row[j]*sol.frame.u[d] end
+        residual=math.max(residual,math.abs(r))
+    end
+    local denominator=diag.matrix_norm*unorm+diag.load_norm
+    local backward=denominator>0 and residual/denominator or residual
+    local function maximum(key,field) return model_errors[key] and model_errors[key][field] or 0 end
+    print(string.format('PORTAL MODEL | %s | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | %.12g | PASS',
+        case.name,diag.kappa,diag.kappa_scaled,dtol,maximum('D','absolute'),maximum('D','relative'),
+        maximum('N','relative'),maximum('V','relative'),maximum('M','relative'),maximum('R','relative'),backward))
 end
+-- Reversal uses the original +/- individual cases, without new models.
+for _,support in ipairs{'PIN','FIX'} do
+    current_case='reversal '..support
+    for _,load in ipairs{'q','P','H','w'} do
+        local positive=solutions['sign '..support..' '..load..' 1']
+        local negative=solutions['sign '..support..' '..load..' -1']
+        for d=1,12 do assert(positive.frame.u[d]==-negative.frame.u[d]) end
+        for i=1,3 do
+            local L=i==2 and 6 or 4
+            for sample=0,20 do
+                local s=L*sample/20
+                local a,b=positive.at(i,s),negative.at(i,s)
+                for _,key in ipairs{'N','V','M','w','u'} do assert(a[key]==-b[key]) end
+            end
+        end
+    end
+end
+-- Decompose the two EXISTING combined geometries into four load components.
+-- Eight supplementary component solves, each still one Frame.solve; no
+-- change to the original 136-model campaign or its Python reference inputs.
+local components=0
+for _,support in ipairs{'PIN','FIX'} do
+    current_case='superposition '..support
+    local combined=solutions['combined '..support]
+    local p=combined.parameters
+    local parts={}
+    for _,load in ipairs{'q','P','H','w'} do
+        local part={};for k,v in pairs(p) do part[k]=v end
+        part.q,part.P,part.H,part.w=0,0,0,0;part[load]=p[load]
+        local count,solve=0,Frame.solve
+        Frame.solve=function(m) count=count+1;return solve(m) end
+        parts[#parts+1]=assert(Portal.solve(part));Frame.solve=solve
+        assert(count==1);components=components+1
+        equilibrium(part,parts[#parts].reactions)
+    end
+    local F=math.abs(p.q*p.l)+math.abs(p.P)+math.abs(p.H)+math.abs(p.w*p.h)
+    local ds=math.max(math.abs(combined.drift.left),math.abs(combined.drift.right),
+        1e-6*F*6^3/math.min(p.EIc,p.EIb))
+    for d=1,12 do
+        local sum=0;for _,part in ipairs(parts) do sum=sum+part.frame.u[d] end
+        eq('superposition nodal',sum,combined.frame.u[d],d%3==0 and ds/6 or ds)
+    end
+    for _,side in ipairs{'left','right'} do
+        for _,key in ipairs{'H','V','M'} do
+            local sum=0;for _,part in ipairs(parts) do sum=sum+(part.reactions[side][key] or 0) end
+            eq('superposition reaction '..key,sum,combined.reactions[side][key] or 0,key=='M' and 6*F or F)
+        end
+    end
+    for member=1,3 do
+        local L=member==2 and p.l or p.h
+        for sample=0,20 do
+            local s=L*sample/20
+            local sum={N=0,V=0,M=0,w=0,u=0}
+            for _,part in ipairs(parts) do
+                local v=part.at(member,s)
+                for key in pairs(sum) do sum[key]=sum[key]+v[key] end
+            end
+            local v=combined.at(member,s)
+            for key,value in pairs(sum) do
+                eq('superposition '..key,value,v[key],key=='M' and 6*F or ((key=='w' or key=='u') and ds or F))
+            end
+            if member==2 then
+                local relative=0
+                for _,part in ipairs(parts) do relative=relative+part.at(2,s).w-(1-s/L)*part.at(2,0).w-s/L*part.at(2,L).w end
+                eq('superposition relative',relative,combined.at(2,s).w-(1-s/L)*combined.at(2,0).w-s/L*combined.at(2,L).w,
+                    math.max(combined.deflection.absolute,1e-6*F*L^3/p.EIb))
+            end
+        end
+    end
+end
+assert(components==8)
+print('PASS P6A reversal: 8 original +/- pairs; superposition: 2 combined cases / 8 component solves')
 -- Validation is fail-closed at the public model AND solve boundaries.
 local valid=cases[1].p
 for _,key in ipairs{'h','l','EIc','EIb','q','P','a','H','w'} do
@@ -243,6 +368,7 @@ for _,invalid in ipairs{false,42,'invalid'} do assert(Portal.model(invalid)==nil
 assert(Portal.model(nil)==nil and Portal.solve(nil)==nil)
 assert(oracles==6 and chord_witnesses==2)
 for key,value in pairs(errors) do print(string.format('PORTAL ERROR | %s | %.12g',key,value)) end
+for key,v in pairs(worst) do print(string.format('PORTAL WORST | %s | %s | %.12g | %s | %.12g',key,v.relative_case,v.relative,v.absolute_case,v.absolute)) end
 print(string.format('PASS P6A: %d models, 50 random geometries x PIN/FIX, %d cuts, six oracles, one solve/model, Fx/Fy/Mz, signs, chord extrema, invalid inputs (%s)',#cases,points,_VERSION))
 '''
 

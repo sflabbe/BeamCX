@@ -1,4 +1,4 @@
--- BeamCX v0.4-P1A: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
+-- BeamCX v0.4-P1B: pure Lua 5.1, static prismatic Euler-Bernoulli frames.
 -- Units: m, kN, kNm; EA in kN, EI in kN*m^2. No TI API or Beam dependency.
 -- Global x right, y up, rotations CCW; downward loads are NEGATIVE.
 -- Local x follows i -> j; local y is local x rotated +90 degrees.
@@ -8,8 +8,9 @@
 -- textbook V positive on the left face, dM/ds=V and dV/ds=q.
 -- nodal_to_diagram is the ONLY end-force -> diagram sign conversion:
 -- M(0)=-M_i, M(L)=+M_j. w is physical local-y displacement, u local-x.
--- Only full-length local-y udl and local-y point loads on horizontal members
--- are supported in P1A. Inclined members accept GLOBAL NODAL loads only.
+-- Member udl/dist/point act along local y, per unit MEMBER length, for any
+-- orientation. Concentrated moments act CCW about z (unchanged by rotation).
+-- Global/projected member loads and axial member loads are outside P1B.
 -- solve/assemble return nil,message on failure; at/extrema reject bad queries.
 -- moment_extrema returns min, s_min, max, s_max; deflection_extrema w, s.
 local Frame = {}
@@ -98,25 +99,42 @@ local function assemble(model)
         local L=math.sqrt(dx*dx+dy*dy)
         if not finite(L) or L<=0 or EI<=0 or EA<=0 then error('invalid member geometry or rigidity',0) end
         members[i]={i=ni,j=nj,EI=EI,EA=EA,L=L,c=dx/L,s=dy/L,
-                    q=0,points={},cuts={0,L},elements={}}
+                    q=0,points={},moments={},distributed={},cuts={0,L},elements={}}
     end
     for _,load in ipairs(model.member_loads or {}) do
-        fields(load,{member=true,type=true,q=true,a=true,P=true},'member load')
+        if type(load)~='table' then error('invalid member load',0) end
+        local kind=load.type
+        -- Diagnose unsupported TYPE before inspecting its possible fields.
+        if kind~='udl' and kind~='point' and kind~='dist' and kind~='moment' then
+            error('unsupported member load type: '..tostring(kind),0)
+        end
+        if kind=='udl' then
+            fields(load,{member=true,type=true,q=true},'udl load')
+        elseif kind=='dist' then
+            fields(load,{member=true,type=true,a=true,b=true,q1=true,q2=true},'dist load')
+        elseif kind=='point' then
+            fields(load,{member=true,type=true,a=true,P=true},'point load')
+        else
+            fields(load,{member=true,type=true,a=true,M=true},'moment load')
+        end
         local mi=load.member
         if not finite(mi) or mi%1~=0 or not members[mi] then error('invalid member index',0) end
-        if load.type~='udl' and load.type~='point' then
-            error('unsupported member load type: '..tostring(load.type),0)
-        end
         local m=members[mi]
-        if m.s~=0 then error('inclined member loads are outside P1A',0) end
-        if load.type=='udl' then
-            if load.a~=nil or load.P~=nil then error('unsupported udl fields',0) end
+        if kind=='udl' then
             m.q=m.q+require_number(load.q,'q')
         else
-            if load.q~=nil then error('unsupported point fields',0) end
-            local a=require_number(load.a,'point a')
-            if a<0 or a>m.L then error('point a outside member',0) end
-            m.points[#m.points+1]={a=a,P=require_number(load.P,'P')}
+            local a=require_number(load.a,kind..' a')
+            if a<0 or a>m.L then error(kind..' a outside member',0) end
+            if kind=='dist' then
+                local b=require_number(load.b,'dist b')
+                if b<=a or b>m.L then error('invalid dist interval: require 0 <= a < b <= L',0) end
+                m.distributed[#m.distributed+1]={left={a=a},right={a=b},
+                    q1=require_number(load.q1,'q1'),q2=require_number(load.q2,'q2')}
+            elseif kind=='point' then
+                m.points[#m.points+1]={a=a,P=require_number(load.P,'P')}
+            else
+                m.moments[#m.moments+1]={a=a,M=require_number(load.M,'M')}
+            end
         end
     end
     local elements={}
@@ -125,6 +143,10 @@ local function assemble(model)
         -- otherwise use the leftmost position, independent of load input order.
         local positions={{a=0},{a=m.L}}
         for _,p in ipairs(m.points) do positions[#positions+1]=p end
+        for _,p in ipairs(m.moments) do positions[#positions+1]=p end
+        for _,d in ipairs(m.distributed) do
+            positions[#positions+1]=d.left;positions[#positions+1]=d.right
+        end
         table.sort(positions,function(a,b) return a.a<b.a end)
         local cuts,point_nodes={},{}
         local first=1
@@ -144,20 +166,40 @@ local function assemble(model)
             end
             point_nodes[#cuts]=id
             for j=first,last do
-                if positions[j].P~=nil then positions[j].position=a;positions[j].node=id end
+                positions[j].position=a;positions[j].node=id
             end
             first=last+1
         end
         m.cuts=cuts;m.point_positions={}
         for _,p in ipairs(m.points) do m.point_positions[p.position]=true end
+        for _,p in ipairs(m.moments) do m.point_positions[p.position]=true end
         for j=1,#cuts-1 do
             local L=cuts[j+1]-cuts[j]
+            local qa,qb=m.q,m.q
+            for _,d in ipairs(m.distributed) do
+                local a,b=d.left.position,d.right.position
+                -- Snapping preserves endpoint intensities on the snapped
+                -- interval. A collapsed interval has zero measure/load.
+                if b>a and cuts[j]>=a and cuts[j+1]<=b then
+                    qa=qa+d.q1+(d.q2-d.q1)*(cuts[j]-a)/(b-a)
+                    qb=qb+d.q1+(d.q2-d.q1)*(cuts[j+1]-a)/(b-a)
+                end
+            end
+            -- Consistent loads: integrate Hermite N(t)^T * q(t) * L dt.
+            -- Uniform qa plus triangle 0 -> (qb-qa) gives transverse
+            -- forces L*(7qa+3qb)/20, L*(3qa+7qb)/20 and nodal CCW
+            -- moments L^2*(3qa+2qb)/60, -L^2*(2qa+3qb)/60.
+            -- Uniform branch retains the P1A arithmetic exactly.
+            local fe
+            if qa==qb then fe={0,qa*L/2,qa*L^2/12,0,qa*L/2,-qa*L^2/12}
+            else fe={0,L*(7*qa+3*qb)/20,L^2*(3*qa+2*qb)/60,
+                     0,L*(3*qa+7*qb)/20,-L^2*(2*qa+3*qb)/60} end
             local ni,nj=point_nodes[j],point_nodes[j+1]
             local T=Frame.transformation(m.c,m.s)
             local kl=Frame.local_k(L,m.EA,m.EI)
-            local el={member=mi,x0=cuts[j],x1=cuts[j+1],L=L,EI=m.EI,q=m.q,
+            local el={member=mi,x0=cuts[j],x1=cuts[j+1],L=L,EI=m.EI,qa=qa,qb=qb,
                       T=T,kl=kl,kg=rotate_k(kl,T),
-                      fe={0,m.q*L/2,m.q*L^2/12,0,m.q*L/2,-m.q*L^2/12},
+                      fe=fe,
                       map={3*ni-2,3*ni-1,3*ni,3*nj-2,3*nj-1,3*nj}}
             elements[#elements+1]=el;m.elements[#m.elements+1]=el
         end
@@ -179,13 +221,24 @@ local function assemble(model)
     end
     for _,m in ipairs(members) do
         for _,p in ipairs(m.points) do external(p.node,-m.s*p.P,m.c*p.P,0) end
-        -- Count each USER UDL resultant, not its mesh-dependent nodal pieces.
-        local Fx,Fy=-m.s*m.q*m.L,m.c*m.q*m.L
-        local x=nodes[m.i].x+m.c*m.L/2
-        local y=nodes[m.i].y+m.s*m.L/2
-        local mom=x*Fy-y*Fx
-        applied.Fx=applied.Fx+Fx;applied.Fy=applied.Fy+Fy;applied.Mz=applied.Mz+mom
-        applied.scale=math.max(applied.scale,math.abs(Fx),math.abs(Fy),math.abs(mom))
+        for _,p in ipairs(m.moments) do external(p.node,0,0,p.M) end
+        local function line_resultant(a,b,qa,qb)
+            local length=b-a
+            local R=(qa+qb)*length/2
+            -- Signed first moment integral s*q(s) ds, equivalent to R*s_c
+            -- when R~=0. No centroid division: R=0 can leave a pure couple.
+            local J=a*R+length^2*(qa+2*qb)/6
+            local Fx,Fy=-m.s*R,m.c*R
+            local origin=nodes[m.i]
+            local mom=origin.x*Fy-origin.y*Fx+J
+            applied.Fx=applied.Fx+Fx;applied.Fy=applied.Fy+Fy;applied.Mz=applied.Mz+mom
+            applied.scale=math.max(applied.scale,math.abs(Fx),math.abs(Fy),math.abs(mom))
+        end
+        -- Use user loads (at snapped boundaries), not mesh-dependent pieces.
+        line_resultant(0,m.L,m.q,m.q)
+        for _,d in ipairs(m.distributed) do
+            line_resultant(d.left.position,d.right.position,d.q1,d.q2)
+        end
     end
     for _,el in ipairs(elements) do
         for i=1,6 do
@@ -311,14 +364,30 @@ end
 -- Single nodal -> diagram conversion. Integrate dV/ds=q, dM/ds=V.
 -- At j, equilibrium gives V(L)=-V_j and M(L)=+M_j; N=-N_i=N_j.
 local function nodal_to_diagram(el,s)
-    return -el.f[1], el.f[2]+el.q*s, -el.f[3]+el.f[2]*s+el.q*s*s/2
+    local g=(el.qb-el.qa)/el.L
+    return -el.f[1], el.f[2]+el.qa*s+g*s*s/2,
+           -el.f[3]+el.f[2]*s+el.qa*s*s/2+g*s*s*s/6
+end
+-- Integrate EI*w^(4)=qa+g*s four times, imposing w=w'=0 at 0,L.
+-- The integration constants (before dividing by EI) are
+-- C3=-qa*L/2-3*g*L^2/20, C2=qa*L^2/12+g*L^3/30, C1=C0=0.
+-- Factoring gives w_p=s^2*(L-s)^2*[5qa+g*(s+2L)]/(120EI), degree 5.
+-- Return both w_p and its exact derivative; exposed for the particular test.
+function Frame.load_particular(L,EI,qa,qb,s)
+    if qa==qb then
+        return qa*s^2*(L-s)^2/(24*EI),qa*s*(L-s)*(L-2*s)/(12*EI)
+    end
+    local g=(qb-qa)/L
+    local h=5*qa+g*(s+2*L)
+    return s^2*(L-s)^2*h/(120*EI),
+           (2*s*(L-s)*(L-2*s)*h+g*s^2*(L-s)^2)/(120*EI)
 end
 local function displacement(el,s)
     local t=s/el.L
     local d,L=el.u,el.L
     local w=(1-3*t^2+2*t^3)*d[2]+L*(t-2*t^2+t^3)*d[3]
           +(3*t^2-2*t^3)*d[5]+L*(-t^2+t^3)*d[6]
-          +el.q*s^2*(L-s)^2/(24*el.EI)
+          +Frame.load_particular(L,el.EI,el.qa,el.qb,s)
     local u=(1-t)*d[1]+t*d[4]
     return w,u
 end
@@ -335,7 +404,7 @@ function Frame.at(sol,member,s,side)
     local m=member_result(sol,member)
     if not finite(s) or s<0 or s>m.L then error('s outside member',0) end
     if side~=nil and side~='left' and side~='right' then error('invalid side',0) end
-    if m.point_positions[s] and side==nil then error('side required at point load node',0) end
+    if m.point_positions[s] and side==nil then error('side required at point or moment load node',0) end
     if s==0 and side=='left' or s==m.L and side=='right' then error('side outside member',0) end
     -- Compare to stored boundaries, never s +/- epsilon. Evaluate each limit
     -- at exactly 0 or L of the corresponding subelement.
@@ -346,14 +415,39 @@ function Frame.at(sol,member,s,side)
     end
     error('no subelement at s',0)
 end
+-- Stable quadratic roots: Q=-0.5*(b+sign(b)*sqrt(D)); roots Q/a,c/Q.
+-- Avoids subtracting nearly equal values for the small root. Scale first.
+local function quadratic_roots(a,b,c)
+    local scale=math.max(math.abs(a),math.abs(b),math.abs(c))
+    if scale==0 then return {} end
+    a,b,c=a/scale,b/scale,c/scale
+    if a==0 then
+        if b==0 then return {} end
+        return {-c/b}
+    end
+    local disc=b*b-4*a*c
+    if disc<0 then return {} end
+    local sign=b<0 and -1 or 1
+    local Q=-0.5*(b+sign*math.sqrt(disc))
+    if Q==0 then return {-b/(2*a)} end
+    return {Q/a,c/Q}
+end
 function Frame.moment_extrema(sol,member)
     local m=member_result(sol,member)
     local lo,xlo,hi,xhi=math.huge,0,-math.huge,0
     for _,el in ipairs(m.elements) do
         local candidates={0,el.L}
-        if el.q~=0 then
-            local s=-el.f[2]/el.q
-            if s>0 and s<el.L then candidates[#candidates+1]=s end
+        -- Preserve P1A arithmetic for uniform loads; otherwise solve
+        -- V(t)=V_i + qa*L*t + (qb-qa)*L*t^2/2, t=s/L.
+        if el.qa==el.qb then
+            if el.qa~=0 then
+                local s=-el.f[2]/el.qa
+                if s>0 and s<el.L then candidates[#candidates+1]=s end
+            end
+        else
+            for _,t in ipairs(quadratic_roots((el.qb-el.qa)*el.L/2,el.qa*el.L,el.f[2])) do
+                if t>0 and t<1 then candidates[#candidates+1]=t*el.L end
+            end
         end
         for _,s in ipairs(candidates) do
             local _,_,v=nodal_to_diagram(el,s)
@@ -370,9 +464,10 @@ function Frame.deflection_extrema(sol,member)
         local d,L=el.u,el.L
         local function slope(s)
             local t=s/L
+            local _,particular_slope=Frame.load_particular(L,el.EI,el.qa,el.qb,s)
             return (-6*t+6*t^2)*d[2]/L+(1-4*t+3*t^2)*d[3]
                  +(6*t-6*t^2)*d[5]/L+(-2*t+3*t^2)*d[6]
-                 +el.q*s*(L-s)*(L-2*s)/(12*el.EI)
+                 +particular_slope
         end
         local function candidate(s)
             local w=displacement(el,s)

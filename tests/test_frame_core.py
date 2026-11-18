@@ -1,4 +1,4 @@
-"""P1A oracles under real Lua: ctypes/5.4, or --lua lua5.1.
+"""P1A + P1B oracles under real Lua: ctypes/5.4, or --lua lua5.1.
 
 --write-lua PATH also exports the identical Lua test chunk for direct execution.
 All beam comparisons use relative 1e-9 (absolute 1e-9 for expected zero),
@@ -211,7 +211,7 @@ for id=24,28 do
     else eq('28 |base|',math.abs(sol.reactions[1].Mz),80/7,1e-4) end
 end
 -- P1A contract boundaries and mechanics not covered by the scalar oracles.
-for _,kind in ipairs{'dist','moment','dT','unknown'} do
+for _,kind in ipairs{'dT','unknown'} do
     m=beam(1);m.member_loads={{member=1,type=kind}}
     fail(m,'unsupported member load type')
 end
@@ -219,8 +219,6 @@ for _,field in ipairs{'releases','springs','settlements','dT'} do
     m=beam(1);m.members[1][field]={};fail(m,'unsupported member field')
 end
 m=beam(1);m.supports[1].uy=.01;fail(m,'unsupported prescribed displacement')
-m=beam(1);m.nodes[2].y=1;m.member_loads={{member=1,type='udl',q=-10}}
-fail(m,'inclined member loads')
 -- Exactly inactive free rz, and a nonzero but small relative pivot.
 m={nodes={{x=0,y=0},{x=6,y=0},{x=9,y=0}},members={{i=1,j=2,EA=1e8,EI=1e4}},
  supports={{node=1,ux=true,uy=true},{node=2,uy=true},{node=3,ux=true,uy=true}}}
@@ -281,6 +279,225 @@ m.member_loads[#m.member_loads+1]={member=2,type='point',a=4,P=-12}
 fail(m,'model too large for handheld')
 print(string.format('CHECKS max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
 print('PASS P1A: '..rows..' numeric oracles, contracts, checks and performance')
+-- P1B: append-only numeric oracles; the 85 P1A numeric checks above remain.
+assert(rows==85)
+local p1a_rows=rows
+local function linear_beam(q1,q2,support,a,b)
+    local m=beam(1,nil,nil,support)
+    m.member_loads={{member=1,type='dist',a=a or 0,b=b or 6,q1=q1,q2=q2}}
+    return m
+end
+sol=solve(linear_beam(0,-10))
+eq('3 A',sol.reactions[1].Ry,10);eq('3 B',sol.reactions[2].Ry,20)
+lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
+eq('3 Mmax',hi,360/(9*math.sqrt(3)));eq('3 xMmax',xhi,6/math.sqrt(3))
+-- Exact simply-supported solution, rather than the rounded prompt decimals:
+-- EI*w/(q0*L^4)=-t^5/120+t^3/36-7t/360;
+-- w'=0 gives t=sqrt(1-sqrt(8/15)).
+local tw=math.sqrt(1-math.sqrt(8/15))
+w,x=Frame.deflection_extrema(sol,1)
+eq('3 wmin',w,10*6^4/1e4*(-tw^5/120+tw^3/36-7*tw/360))
+eq('3 xwmin',x,6*tw)
+local triangular=sol
+m=linear_beam(0,-10,nil,0,3)
+m.member_loads[2]={member=1,type='dist',a=3,b=6,q1=-10,q2=0}
+sol=solve(m)
+eq('4 A',sol.reactions[1].Ry,15);eq('4 B',sol.reactions[2].Ry,15)
+eq('4 M(3)',Frame.at(sol,1,3).M,30);eq('4 w(3)',Frame.at(sol,1,3).w,-.0108)
+w,x=Frame.deflection_extrema(sol,1)
+eq('4 wmin',w,-.0108);eq('4 xwmin',x,3)
+sol=solve(linear_beam(-10,-10,nil,0,2.5))
+local RA=10*2.5*(6-2.5/2)/6
+lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
+eq('5 A',sol.reactions[1].Ry,RA);eq('5 B',sol.reactions[2].Ry,25-RA)
+eq('5 Mmax',hi,RA^2/20);eq('5 xMmax',xhi,RA/10)
+sol=solve(linear_beam(-10,-20))
+eq('5b A',sol.reactions[1].Ry,40);eq('5b B',sol.reactions[2].Ry,50)
+local uniform=solve(beam(1,{true}))
+for i=0,6 do
+    local v=Frame.at(sol,1,i)
+    local v1,v3=Frame.at(uniform,1,i),Frame.at(triangular,1,i)
+    eq('5b M('..i..')',v.M,v1.M+v3.M)
+    eq('5b w('..i..')',v.w,v1.w+v3.w)
+end
+m=beam(1);m.member_loads={{member=1,type='moment',a=0,M=30}}
+sol=solve(m)
+eq('6 A',sol.reactions[1].Ry,5);eq('6 B',sol.reactions[2].Ry,-5)
+eq('6 M(0 right)',Frame.at(sol,1,0,'right').M,-30)
+eq('6 M(L)',Frame.at(sol,1,6).M,0)
+eq('6 theta i',sol.u[3],.006);eq('6 theta j',sol.u[6],-.003)
+m.member_loads[1].a=3
+sol=solve(m)
+eq('7 A',sol.reactions[1].Ry,5);eq('7 B',sol.reactions[2].Ry,-5)
+l,r=Frame.at(sol,1,3,'left'),Frame.at(sol,1,3,'right')
+eq('7 M left',l.M,15);eq('7 M right',r.M,-15)
+eq('7 M jump',l.M-r.M,30);assert(l.M-r.M==30)
+eq('7 w(3)',l.w,0);assert(l.w==r.w)
+assert(not pcall(Frame.at,sol,1,3))
+lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
+eq('7 Mmin',lo,-15);eq('7 xmin',xlo,3)
+eq('7 Mmax',hi,15);eq('7 xmax',xhi,3)
+sol=solve(linear_beam(0,-10,'fixed'))
+eq('7b M(0)',Frame.at(sol,1,0).M,-12);eq('7b M(L)',Frame.at(sol,1,6).M,-18)
+-- Triangular consistent loads, with their NODAL signs, independently fixed.
+local fe=sol.elements[1].fe
+eq('C4 fe Vi',fe[2],-9);eq('C4 fe Mi',fe[3],-12)
+eq('C4 fe Vj',fe[5],-21);eq('C4 fe Mj',fe[6],18)
+sol=solve(linear_beam(-10,0,'cantilever'))
+eq('7c M(0)',Frame.at(sol,1,0).M,-60);eq('7c w(L)',Frame.at(sol,1,6).w,-.0432)
+sol=solve(linear_beam(0,-10,'cantilever'))
+eq('7d M(0)',Frame.at(sol,1,0).M,-120);eq('7d w(L)',Frame.at(sol,1,6).w,-.1188)
+local function inclined(c,s,loads)
+    return {nodes={{x=0,y=0},{x=6*c,y=6*s}},members={{i=1,j=2,EI=1e4,EA=1e8}},
+        supports={{node=1,ux=true,uy=true,rz=true}},member_loads=loads}
+end
+for _,angle in ipairs{0,30,90,135} do
+    local c,s=math.cos(angle*math.pi/180),math.sin(angle*math.pi/180)
+    m=inclined(c,s,{{member=1,type='udl',q=-10}})
+    sol=solve(m)
+    eq('8a '..angle..' w(L)',Frame.at(sol,1,sol.members[1].L).w,-.162)
+    eq('8a '..angle..' M(0)',Frame.at(sol,1,0).M,-180)
+    eq('8a '..angle..' Rx',sol.reactions[1].Rx,-60*s)
+    eq('8a '..angle..' Ry',sol.reactions[1].Ry,60*c)
+    eq('8a '..angle..' Mz',sol.reactions[1].Mz,180)
+end
+m=inclined(math.sqrt(3)/2,.5,{{member=1,type='point',a=6,P=-12},
+                            {member=1,type='moment',a=6,M=30}})
+sol=solve(m)
+eq('8b w(L)',Frame.at(sol,1,6,'left').w,-.0864+30*36/(2*1e4))
+eq('8b M(0)',Frame.at(sol,1,0).M,-72+30)
+eq('8b Rx',sol.reactions[1].Rx,-6)
+eq('8b Ry',sol.reactions[1].Ry,12*math.sqrt(3)/2)
+eq('8b Mz',sol.reactions[1].Mz,42)
+-- Also rotate a PARTIAL dist, including its partition, to all four angles.
+local horizontal=solve(linear_beam(-10,-20,'cantilever',1,4))
+for _,angle in ipairs{0,30,90,135} do
+    local c,s=math.cos(angle*math.pi/180),math.sin(angle*math.pi/180)
+    sol=solve(inclined(c,s,{{member=1,type='dist',a=1,b=4,q1=-10,q2=-20}}))
+    eq('8 dist '..angle..' w(L)',Frame.at(sol,1,6).w,Frame.at(horizontal,1,6).w)
+    eq('8 dist '..angle..' M(0)',Frame.at(sol,1,0).M,Frame.at(horizontal,1,0).M)
+    eq('8 dist '..angle..' Rx',sol.reactions[1].Rx,-45*s)
+    eq('8 dist '..angle..' Ry',sol.reactions[1].Ry,45*c)
+    eq('8 dist '..angle..' Mz',sol.reactions[1].Mz,120)
+end
+m=portal(false);m.member_loads={{member=1,type='udl',q=-10}}
+sol=solve(m)
+eq('8c |H right|',math.abs(sol.reactions[4].Rx),11,1e-4)
+eq('8c |H left|',math.abs(sol.reactions[1].Rx),29,1e-4)
+eq('8c |Ry left|',math.abs(sol.reactions[1].Ry),40/3,1e-4)
+eq('8c |Ry right|',math.abs(sol.reactions[4].Ry),40/3,1e-4)
+-- C1: type takes precedence over fields that belong to a future load type.
+m=beam(1);m.member_loads={{member=1,type='foo',anything=1}}
+assert(fail(m,'unsupported member load type: foo')=='unsupported member load type: foo')
+for _,load in ipairs{
+    {type='udl',q=-10,other=1},{type='dist',a=0,b=6,q1=-10,q2=0,other=1},
+    {type='point',a=2,P=-12,other=1},{type='moment',a=3,M=30,other=1}} do
+    load.member=1;m=beam(1);m.member_loads={load};fail(m,'field')
+end
+-- C2: invalid intervals/positions and non-finite inputs must never solve.
+for _,interval in ipairs{{2,2},{3,2},{-1,2},{0,7},{7,8},{0,-1}} do
+    fail(linear_beam(-10,0,nil,interval[1],interval[2]),'dist')
+end
+for _,bad in ipairs{math.huge,-math.huge,0/0} do
+    for _,field in ipairs{'a','b','q1','q2'} do
+        m=linear_beam(-10,0);m.member_loads[1][field]=bad;fail(m,'invalid')
+    end
+    m=beam(1);m.member_loads={{member=1,type='moment',a=3,M=bad}};fail(m,'invalid')
+    m.member_loads[1]={member=1,type='moment',a=bad,M=30};fail(m,'invalid')
+end
+for _,a in ipairs{-1,7} do
+    m=beam(1);m.member_loads={{member=1,type='moment',a=a,M=30}};fail(m,'outside member')
+end
+-- C4: recover the PARTICULAR polynomial independently by six-point Lagrange
+-- interpolation; differentiate the recovered coefficients analytically.
+-- This checks the production helper, not a second implementation of it.
+for index,pair in ipairs{{-3,-11},{11,-2},{-10,-10}} do
+    local L,EI=6,1e4
+    local coeff={}
+    for i=0,5 do coeff[i]=0 end
+    for j=0,5 do
+        local basis,degree,denom={[0]=1},0,1
+        for k=0,5 do if k~=j then
+            local next_basis={}
+            for p=0,degree+1 do next_basis[p]=0 end
+            for p=0,degree do
+                next_basis[p]=next_basis[p]-k/5*basis[p]
+                next_basis[p+1]=next_basis[p+1]+basis[p]
+            end
+            basis=next_basis;degree=degree+1;denom=denom*(j-k)/5
+        end end
+        local wp=Frame.load_particular(L,EI,pair[1],pair[2],L*j/5)
+        for p=0,5 do coeff[p]=coeff[p]+wp*basis[p]/denom end
+    end
+    for j=0,4 do
+        local t=j/4
+        eq('C4 '..index..' EI*w4 t='..t,EI*(24*coeff[4]+120*coeff[5]*t)/L^4,
+            pair[1]+(pair[2]-pair[1])*t)
+    end
+    for _,s in ipairs{0,L} do
+        local wp,dwp=Frame.load_particular(L,EI,pair[1],pair[2],s)
+        eq('C4 '..index..' w('..s..')',wp,0);eq('C4 '..index..' dw('..s..')',dwp,0)
+        assert(wp==0 and dwp==0)
+    end
+end
+-- Two real shear roots, sign-changing q and ZERO resultant (finite couple).
+sol=solve(linear_beam(-10,10))
+lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
+eq('roots Mmin',lo,-10*math.sqrt(3)/3);eq('roots xmin',xlo,3+math.sqrt(3))
+eq('roots Mmax',hi,10*math.sqrt(3)/3);eq('roots xmax',xhi,3-math.sqrt(3))
+-- Stable small root: V(s)=epsilon-s-s^2/6 on a cantilever.
+m=linear_beam(-1,-3,'cantilever');m.nodal_loads={{node=2,Fy=12-1e-4}}
+sol=solve(m);lo,xlo,hi,xhi=Frame.moment_extrema(sol,1)
+eq('roots small xmax',xhi,6e-4/(3+math.sqrt(9+6e-4)))
+-- Overlapping partial distributions + udl + point + moment. Compare exact
+-- superposition across distinct partitions, and continuity at dist borders.
+local loads={{member=1,type='dist',a=1,b=5,q1=-10,q2=-20},
+             {member=1,type='dist',a=2,b=4,q1=5,q2=-5},
+             {member=1,type='udl',q=-2},{member=1,type='point',a=3,P=-12},
+             {member=1,type='moment',a=3,M=30}}
+m=beam(1);m.member_loads=loads;sol=solve(m)
+local singles={}
+for _,load in ipairs(loads) do
+    local single=beam(1);single.member_loads={load};singles[#singles+1]=solve(single)
+end
+for _,s in ipairs{.5,1,2,3,4,5,5.5} do
+    local got=Frame.at(sol,1,s,'right')
+    for _,field in ipairs{'V','M','w'} do
+        local want=0
+        for _,single in ipairs(singles) do want=want+Frame.at(single,1,s,'right')[field] end
+        eq('overlap '..field..' s='..s,got[field],want)
+    end
+end
+for _,s in ipairs{1,2,4,5} do
+    assert(pcall(Frame.at,sol,1,s))
+    l,r=Frame.at(sol,1,s,'left'),Frame.at(sol,1,s,'right')
+    eq('border V s='..s,l.V,r.V);eq('border M s='..s,l.M,r.M)
+end
+-- Moments/dist boundaries share the P1A fusion rule and do not mutate input.
+m=linear_beam(-10,-20,nil,1e-7,3+3e-6)
+m.member_loads[2]={member=1,type='moment',a=3,M=30}
+sol=solve(m)
+assert(#sol.nodes==3 and #sol.members[1].cuts==3 and sol.members[1].cuts[2]==3)
+assert(m.member_loads[1].a==1e-7 and m.member_loads[1].b==3+3e-6)
+assert(not pcall(Frame.at,sol,1,3))
+-- An interval whose endpoints merge has zero measure after snapping.
+sol=solve(linear_beam(-10,-20,nil,2,2+1e-7))
+eq('collapsed dist A',sol.reactions[1].Ry,0);eq('collapsed dist B',sol.reactions[2].Ry,0)
+-- 60 nodes: 30 original + 29 dist-start nodes + one extra moment node.
+m={nodes={},members={},supports={},member_loads={}}
+for i=1,30 do
+    m.nodes[i]={x=(i-1)*6,y=0};m.supports[i]={node=i,ux=i==1,uy=true}
+    if i>1 then
+        m.members[i-1]={i=i-1,j=i,EA=1e8,EI=1e4}
+        m.member_loads[#m.member_loads+1]={member=i-1,type='dist',a=2,b=6,q1=-10,q2=-20}
+        m.member_loads[#m.member_loads+1]={member=i-1,type='moment',a=2,M=30}
+    end
+end
+m.member_loads[#m.member_loads+1]={member=1,type='moment',a=4,M=30}
+t=os.clock();sol=solve(m);elapsed=os.clock()-t;assert(#sol.nodes==60)
+print(string.format('PERF P1B 60 nodes: nodes=%d dofs=%d free=%d seconds=%.6f',#sol.nodes,sol.ndof,#sol.free,elapsed))
+print(string.format('CHECKS P1B max equilibrium_relative=%.6g residual_relative=%.6g tolerance=1e-8',max_equilibrium,max_residual))
+print('PASS P1B: '..(rows-p1a_rows)..' new numeric oracles; 85 P1A preserved')
 '''
 
 

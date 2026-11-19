@@ -50,9 +50,6 @@ appended at the end of this same lexical chunk.
 | `src/beam_ui_portal.lua` | Four unchanged functions: inputs, arrows, diagrams/deformation, scrolling results |
 | `src/beam_ui_sections.lua` | Three unchanged functions: catalogue rows, active row and section/material view |
 | `build.py` | Explicit single/continuous/portal/sections inclusion order at marked locations in the entry point |
-| `tests/ui_equivalence.lua`, `tests/test_ui_equivalence.py` | Identical deterministic event replay against original and current bundles |
-| `tests/fixtures/p6b_bundle.lua.gz`, `p6b_ui_baseline.md` | Original bundle and provenance; hash checked before loading |
-| `tests/render_ui_equivalence.py` | Optional rendering of real before/after graphics commands |
 | `CHANGELOG.md`, this report, `P6C0_UI_COMPARISON.png` | Development entry and validation evidence |
 | `BeamCX.lua`, `BeamCX.tns`, `PORTAL_UI_CONTACT.png` | Rebuilt artifacts and regenerated existing portal sheet |
 
@@ -106,14 +103,17 @@ rebuilt, passed `luac5.1 -p`, passed the relevant existing UI suite(s), and
 passed the full exact P6B event/graphics replay. Separate extraction logs
 remain under `/tmp/beamcx-p6c0-baseline/extract-*.log`.
 
-Final: **17/17** suites in each VM: all 16 existing suites plus the new
-equivalence suite. Preserved 394 Frame rows (265+129), 2,042 historical beam
+Repetition already executed on **2026-11-19: PASS, 17/17** suites in each VM
+(Lua 5.1.5 and liblua 5.4.7): all 16 existing suites plus the equivalence
+suite subsequently retired by the closure addendum below. Preserved
+394 Frame rows (265+129), 2,042 historical beam
 cases, 300 independent continuous models (1,050 spans / 4,500 patterns),
 136 P6A portal models and six classical witnesses. Existing CAS, document,
 layout and numerical criteria were not relaxed. Five Python packaging and
 USB guard checks also pass.
 
-Commands run successfully:
+Commands run successfully during that validation (including the subsequently
+retired comparison tools):
 
 ```bash
 python3 build.py
@@ -130,10 +130,12 @@ BX_TRACE_DIR=/tmp/beamcx-p6c0-after BX_GRAPHICS_DIR=/tmp/beamcx-p6c0-after/graph
 python3 tests/render_ui_equivalence.py /tmp/beamcx-p6c0-after/graphics P6C0_UI_COMPARISON.png
 ```
 
-The capture directories were created before these optional evidence commands.
-Final suite logs are `/tmp/beamcx-p6c0-after/suites51.log` and `suites54.log`.
-Ordinary future UI regression requires only the generated bundle and the
-repository baseline fixture, not these temporary captures, Git or a service.
+The capture directories were created before these evidence commands.
+Suite logs were written to `/tmp/beamcx-p6c0-after/suites51.log` and
+`suites54.log`. These paths and the comparison commands above document the
+completed run; they are not requirements for future UI tests. After closure,
+ordinary regression retains the 16 existing suites, with no retained P6B
+bundle fixture or equivalence-tool dependency.
 
 ## Exact differential event and graphics comparison
 
@@ -200,8 +202,47 @@ and fourteen `bp_*` exports. Values remain unrounded solver results; store
 order, returned-error/exception handling and success/error messages match.
 For example the default single-span baseline retains `bx_mmax=45`,
 `bx_vabs=30`, `bx_wmax=16.875`, `bx_ei=10000`. Continuous and portal full
-precision values and saved structures are retained in the event captures
-and reproduced from the hash-checked original bundle during every test run.
+precision values and saved structures matched in the completed event captures
+against the hash-checked original bundle. The comparison fixture and harness
+were subsequently removed as recorded below.
+
+## Closure addendum — 2026-11-19
+
+At the owner's request, removed only these five temporary comparison files:
+
+```text
+tests/ui_equivalence.lua
+tests/test_ui_equivalence.py
+tests/render_ui_equivalence.py
+tests/fixtures/p6b_bundle.lua.gz
+tests/fixtures/p6b_ui_baseline.md
+```
+
+The preceding differential results and graphics sheet remain evidence of
+the completed validation, not a retained additional test suite. The already
+executed repetition on **2026-11-19 was PASS** in Lua 5.1.5 and liblua 5.4.7,
+with all 17 then-present suites and all five packaging/USB checks passing.
+This addendum does not claim a new suite run after deleting the harness.
+
+Static comparison against P6B commit
+`1d6d5025a9c99877b471253ecee8475848d32726` (`1d6d502`):
+
+- Reconstructed both bundles in temporary directories using their respective
+  `build.py` and sources; no productive source or workspace bundle was changed.
+  Their SHA-256 values match the before/after hashes recorded above.
+- The line multiset is identical apart from **10 added blank lines and six
+  current comment lines**: five added comments and one replacing the original
+  support-helper comment. Excluding blank/comment-only lines, the code-line
+  multisets are identical.
+- `luac5.1 -l -l` reports **142 locals in both main chunks**, with the same
+  144 slots, 1,139 instructions, 190 constants and 128 child functions.
+- `GETGLOBAL`/`SETGLOBAL` operand multisets, including occurrence counts, are
+  identical. Upvalue-name multisets (728 references) and per-prototype upvalue
+  count distributions are identical. No global or upvalue additions appear.
+
+Closure changes only this report and the five deletions. `src/`, `build.py`,
+the generated Lua/TNS artifacts, the existing 16 suites and their historical
+fixtures remain unchanged. Physical-CX acceptance remains pending.
 
 ## Build, packaging and resource use
 

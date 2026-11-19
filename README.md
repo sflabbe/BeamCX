@@ -3,9 +3,9 @@
 **Lightweight 2D Euler–Bernoulli beam calculator for the original TI-Nspire CX CAS (color screen).**
 TI-Lua 5.1 app for single-span beams, continuous prismatic beams and rectangular portals, with support presets, load envelopes, deflection, and a small offline material/section catalogue. No Ndless, Python, network connection, or extra libraries are required **on the calculator**.
 
-Version: **0.6.0 — Rectangular portal**. **PC IMPLEMENTATION/PASS — HARDWARE PENDING.** A small teaching / engineering-check tool, **not** a design-code verifier.
+Version: **0.6.1 — Portal section groups**. **PC IMPLEMENTATION/PASS — HARDWARE PENDING.** A small teaching / engineering-check tool, **not** a design-code verifier.
 
-The application uses one numerical engine: `BeamPreset → Frame.solve` for the four single-span systems and `ContinuousPreset → Frame.solve / Frame.combine` for **CONTINUOUS**. PORTAL uses `PortalPreset.solve → Frame.solve`, exactly once per stale model. Single-span calculation remains immediate; continuous beams and portals use deferred calculation and cached plots. Only complete, valid **0.6.0** saved documents are accepted. A v0.5.0 or older document, or any malformed current document, resets ALL state to defaults at the selector with `Invalid document or version: defaults restored`. There is no compatibility parser or migration.
+The application uses one numerical engine: `BeamPreset → Frame.solve` for the four single-span systems and `ContinuousPreset → Frame.solve / Frame.combine` for **CONTINUOUS**. PORTAL uses `PortalPreset.solve → Frame.solve`, exactly once per stale model. Single-span calculation remains immediate; continuous beams and portals use deferred calculation and cached plots. Only complete, valid **0.6.1** saved documents are accepted. A v0.6.0 or earlier document, or any malformed current document, resets ALL state to defaults at the selector with `Invalid document or version: defaults restored`. There is no compatibility parser or migration.
 
 ## Features
 
@@ -15,6 +15,7 @@ The application uses one numerical engine: `BeamPreset → Frame.solve` for the 
 - Reaction forces; shear `V`, bending moment `M`, and elastic deflection `w` plots, with movable cursor and displayed extrema.
 - Analytical maximum absolute deflection and position, span/deflection ratio, and selectable **L/250 / L/300** comparisons with utilization percentages.
 - Optional automatic self-weight from steel catalogue mass or concrete rectangle dimensions; **OFF by default**.
+- PORTAL has independent **Columns / Beam** catalogue groups, with one common section for both columns. Optional portal self-weight applies to the beam only; columns display **Excluded (axial)**.
 - Explicit **EXPORT CAS** action for eight numeric results in the current TI-Nspire problem: `bx_*` for single-span beams, `bc_*` for continuous beams; PORTAL explicitly exports fourteen `bp_*` values.
 - **Single-span plot convention:** sagging moment `M > 0` is drawn *below* the reference line, hogging `M < 0` *above* it.
 - Offline `EI` input or automatic `EI = E × I` via:
@@ -74,7 +75,7 @@ Supported target / hardware history: original TI-Nspire CX CAS with OS **4.5.5.7
 
 **v0.3.3 was hardware-tested on a TI-Nspire CX CAS on 2026-11-18:** load arrows followed the sign for negative q and P, including upward P with downward q; titles and supports had no overlaps. A C25/30 cantilever with self-weight and `Lref=2.5L (EC2/NA)` gave `|w|max = 31.446 mm` and `Lref/|w| = 477.01`. Other materials displayed `AGREE LIMIT`. The classic-zlib package transferred successfully with a plain file name in the root folder.
 
-**v0.5.0 is validated on the original CX CAS by the owner (P6B baseline).** v0.6.0 is PC-qualified; portal hardware acceptance remains pending. See [P6B validation and owner checklist](VALIDATION_P6B.md), the [simulated contact sheet](PORTAL_UI_CONTACT.png), and historical [P5B validation](VALIDATION_P5B.md). See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
+**v0.6.0 / P6C-0 is accepted on the original CX CAS by the owner.** v0.6.1 portal section groups remain hardware pending. See [P6C-R1 validation and owner checklist](VALIDATION_P6C_R1.md), the [simulated contact sheet](PORTAL_UI_CONTACT.png), historical [P6B validation](VALIDATION_P6B.md) and [P5B validation](VALIDATION_P5B.md). See the historical [P2B validation report](VALIDATION_P2B.md) and the [P5A calculation report](VALIDATION_P5A.md).
 
 ## Keys
 
@@ -123,7 +124,7 @@ Case E (3×6 m, PIN–PIN, g=10, q=5, EI=10000, default factors, self-weight OFF
 
 The interface is English throughout. Numerical results use two decimal places, for example `15.00 kN`, `3.96 mm`, `5.10 m` and `1.35` for a load factor. Exact zero, including negative zero, displays as `0.00`. Nonzero magnitudes below 0.005 use scientific notation with a two-decimal mantissa, such as `-1.23e-08`, to retain their sign and magnitude. Values of magnitude 10⁷ or greater also use scientific notation to fit the small display.
 
-This formatting only changes the text shown on screen. Keyboard text stays unrounded while editing; solver input, extrema, comparisons, saved numbers and `bx_*`/`bc_*`/`bp_*` exports retain full precision. Only complete v0.6.0 documents are accepted; v0.5.0 documents are rejection witnesses, never migrated. Long selector diagnostics wrap instead of being truncated. See the [R2 validation and naming report](VALIDATION_P5B_UI_POLISH_R2.md).
+This formatting only changes the text shown on screen. Keyboard text stays unrounded while editing; solver input, extrema, comparisons, saved numbers and `bx_*`/`bc_*`/`bp_*` exports retain full precision. Only complete v0.6.1 documents are accepted; v0.6.0 and earlier documents are rejected, never migrated. Long selector diagnostics wrap instead of being truncated. See the [R2 validation and naming report](VALIDATION_P5B_UI_POLISH_R2.md).
 
 ### PORTAL
 
@@ -135,8 +136,26 @@ left/right bases, nodes 2/3 the left/right eaves; members are 1→2 (left column
 UP/DOWN selects a field in the scrolling input list. LEFT/RIGHT toggles Base.
 Type numbers and press ENTER to confirm; editing retains full precision.
 Defaults: FIX, h=4 m, l=6 m, EIc=10000 and EIb=15000 kN·m², q=10 kN/m,
-P=0 kN at a=3 m, H=0 kN and w=0 kN/m. EIc/EIb are manual numbers; portals
-have no section page, catalogue selection or automatic self-weight.
+P=0 kN at a=3 m, H=0 kN and w=0 kN/m. Both section groups initially use
+MANUAL, retaining the accepted default results. EIc/EIb are derived from
+the Columns/Beam sections. Input EI edits update the corresponding manual
+section; catalogue groups display `(auto)` and reject edits with
+`EI from section; use TAB`.
+
+TAB cycles **Input → Results → Sections → Input**. The existing section
+page starts with **Group | Columns / Beam**; LEFT/RIGHT switches groups.
+Each group independently uses the existing materials, steel profiles,
+concrete b/h dimensions or manual EI. All properties come from the offline
+catalogue; concrete bending uses I=b·h³/12. Section changes mark results
+outdated and never solve on the section page. No deflection-limit row is
+shown for portals.
+
+Beam self-weight is optional and OFF by default. With ON, each solve uses
+a copy with q_total=q_user+q_sw; input q remains unchanged. MANUAL or absent
+weight data forces OFF. Columns show **Excluded (axial)** and cannot enable
+self-weight. The load header adds `sw=…` only when ON, and arrows follow
+the effective beam load. The results table begins with Columns, Beam and
+Self-weight provenance rows, using the catalogue labels and materials.
 
 q and P are positive downward on the beam. H acts at the left eave, positive
 rightward. w is uniform on the left column, positive rightward. Negative
@@ -147,7 +166,8 @@ When P=0, reducing l below inactive a resets a=l/2; active invalid a is rejected
 
 Valid changes mark results stale. TAB queues the normal TI timer and displays
 `Calculating...`; one PortalPreset.solve and one Frame.solve then populate the
-result and plot cache. TAB returns to input. Repaints, mode changes, table
+result and plot cache. TAB advances through sections to input and cancels
+pending work when leaving results. Repaints, mode changes, table
 scrolling and CAS export do not solve. A failed calculation restores the prior
 confirmed model; there is no partial result publication.
 
@@ -187,6 +207,8 @@ Portal CAS exports are unrounded numeric values, only on explicit ENTER in
 the results table. PIN moments export numeric zero. All fourteen values are
 validated before any store; partial failures show an error, never success.
 Only fourteen successful stores display `CAS: 14 variables stored`.
+Enabled beam self-weight is included in these results; names, count, units
+and meanings are unchanged. The `bx_*` and `bc_*` contracts are unchanged.
 
 | Variable | Meaning | Unit |
 | --- | --- | --- |
@@ -205,10 +227,15 @@ Only fourteen successful stores display `CAS: 14 variables stored`.
 | bp_wrel | Signed governing beam chord-relative deflection | mm |
 | bp_xwrel | Local position of governing beam deflection | m |
 
-Save/restore persists all three parameter sets, active system, page/mode,
-portal member and local cursor; matrices, solutions, samples and timers are
-not serialized. Complete valid portal results documents reopen at input and
-wait for normal deferred results entry. **Only exact format 0.6.0 is accepted.**
+Save/restore persists all three parameter sets, both `portal_sections`, the
+active section group, beam self-weight flag, active system, page/mode,
+portal member and local cursor. Portal page 3 is retained; results reopen
+at input and wait for normal deferred calculation. EIc/EIb are recomputed
+from the saved groups before physical validation; contradictory saved EI
+caches never override the catalogue. Invalid groups, incompatible ON weight
+or an invalid physical model reject the whole document and restore defaults.
+Matrices, solutions, samples and timers are not serialized.
+**Only exact format 0.6.1 is accepted; no v0.6.0 migration.**
 
 ### Deflection comparison and self-weight
 

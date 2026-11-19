@@ -259,7 +259,7 @@ print('PASS: Esc clears errors only for a valid result; invalid text recovery ex
 fresh()
 on.restore{params={L=8,q=7,P=12,a=3,EI=10000,support=4},page=2,mode=2,cursor=.25}
 local restored=on.save()
-assert(restored.format=='0.6.0' and restored.page==0 and restored.params.support==1)
+assert(restored.format=='0.6.1' and restored.page==0 and restored.params.support==1)
 eq(restored.params.L,6);eq(restored.params.q,10)
 fresh();focus(3);on.enterKey();on.escapeKey()
 local selector_saved=on.save()
@@ -338,8 +338,28 @@ local function paint(c,has_error)
     Frame.solve=solve
     assert(paint_solves==0,'selector painting must never solve')
     unchanged(before,state(),true)
+    -- Orange member ordinates must end on the frame, not hang in mid-air.
+    -- The portal references used to leave six such endpoints disconnected.
+    local box=gc.fill[8]
+    local left,right,top,bottom=box.x+24,box.x+box.w-24,box.y+18,box.y+box.h-8
+    local vertices={}
+    local function vertex(x,y)
+        for _,v in ipairs(vertices) do
+            if v.x==x and v.y==y then v.degree=v.degree+1;return end
+        end
+        vertices[#vertices+1]={x=x,y=y,degree=1}
+    end
+    for _,line in ipairs(gc.curves) do
+        if line.card==6 then vertex(line.x1,line.y1);vertex(line.x2,line.y2) end
+    end
+    for _,v in ipairs(vertices) do
+        if v.degree==1 then
+            assert((v.x==left or v.x==right) and (v.y==top or v.y==bottom),
+                'open portal reference ordinate at '..v.x..','..v.y)
+        end
+    end
     assert(#gc.fill==8,'expected background, header and six cards')
-    assert(#gc.curves==5*32+18,'five unchanged beam silhouettes and portal reference')
+    assert(#gc.curves==5*32+24,'five unchanged beam silhouettes and closed portal reference')
     assert(#gc.schematics==66,'five unchanged schematics and portal fixed frame')
     assert(#gc.axes==5,'expected one reference axis per card')
     assert(gc.lines==#gc.curves+#gc.axes+#gc.schematics)

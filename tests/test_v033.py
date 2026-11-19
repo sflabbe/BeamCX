@@ -25,7 +25,9 @@ local function eq(a,b)
 end
 local function contains(text,fragment) return string.find(text,fragment,1,true)~=nil end
 local function model(support,material,q,P,page,mode)
-    return {format='0.6.0',continuous=on.save().continuous,portal=on.save().portal,
+    return {format='0.6.1',continuous=on.save().continuous,portal=on.save().portal,
+        portal_sections=on.save().portal_sections,portal_section_group=on.save().portal_section_group,
+        portal_beam_self_weight=on.save().portal_beam_self_weight,
         portal_member=2,portal_s=3,portal_side='left',
         params={L=6,q=q or 10,P=P or 0,a=3,EI=10000,support=support},
         section={material=material or 1,profile=10,b=250,h=450,manualEI=10000},

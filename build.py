@@ -32,7 +32,7 @@ for name, marker, localname in [
         if localname=='PortalPreset':
             src=src.replace('local PortalPreset=', 'PortalPreset=',1)
     parts.append(src)
-out='-- BeamCX v0.6.0 (generated).\n'+'\n'.join(parts)
+out='-- BeamCX v0.6.1 (generated).\n'+'\n'.join(parts)
 (root/'BeamCX.lua').write_text(out, encoding='utf-8')
 print(f'Wrote BeamCX.lua: {len(out.encode()):,} bytes')
 print('Package with: python3 tools/package.py')

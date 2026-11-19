@@ -11,6 +11,8 @@ local function draw_portal_edit(gc,w,h)
         fitted(gc,field[2],12,y,170,10)
         local value=portal[field[1]]
         if type(value)=='number' then value=fmt(value) end
+        if (field[1]=='EIc' or field[1]=='EIb') and
+           portal_sections[field[1]=='EIc' and 'columns' or 'beam'].material~=1 then value=value..' (auto)' end
         fitted(gc,i==edit_index and typing~=nil and typing..'_' or value,186,y,w-198,10)
     end
     color(gc,255,200,112);gc:setFont('sansserif','r',9)
@@ -35,19 +37,21 @@ local function draw_portal_table(gc,w,h)
     table_page=math.max(1,math.min(#samples.table-count+1,table_page))
     for i=table_page,math.min(#samples.table,table_page+count-1) do
         local row=samples.table[i];local y=46+(i-table_page)*15
-        fitted(gc,row[1],8,y,166,9);fitted(gc,row[2],178,y,w-186,9)
+        local x=i<=3 and 92 or 178
+        fitted(gc,row[1],8,y,x-12,9);fitted(gc,row[2],x,y,w-x-8,9)
     end
     color(gc,255,200,112);label(gc,'limits: OPEN (project / NA)',7,h-47)
     color(gc,128,222,181);fitted(gc,export_message or 'ENTER: EXPORT CAS bp_* (14)',7,h-31,w-14,9)
     color(gc,171,193,207);gc:setFont('sansserif','r',8)
-    label(gc,'UP/DOWN scroll | LEFT/RIGHT mode | TAB input',7,h-15)
+    label(gc,'UP/DOWN scroll | LEFT/RIGHT mode | TAB sections',7,h-15)
 end
 
 local function portal_diagram(gc,w,h)
     local titles={'M [kNm] | + tension side','V [kN] | local +y side','N [kN] | + tension','Deformed | absolute'}
     color(gc,215,225,236);gc:setFont('sansserif','r',9)
     fitted(gc,'PORTAL '..portal.base..' | '..titles[mode],7,28,w-14,9)
-    fitted(gc,'q='..fmt(portal.q)..' P='..fmt(portal.P)..' H='..fmt(portal.H)..' w='..fmt(portal.w),7,43,w-14,8)
+    fitted(gc,'q='..fmt(portal.q)..' P='..fmt(portal.P)..' H='..fmt(portal.H)..' w='..fmt(portal.w)..
+        (portal_beam_self_weight and (' sw='..fmt(sec_info('beam').q_sw)) or ''),7,43,w-14,8)
     local scale=math.min((w-100)/portal.l,(h-164)/portal.h)
     local left=(w-portal.l*scale)/2
     local bottom=h-82
@@ -77,7 +81,7 @@ local function portal_diagram(gc,w,h)
             portal_arrow(gc,px(x),a,px(x),b)
         end
     end
-    if portal.q~=0 then for k=1,3 do vertical(portal.q,portal.l*k/4,12) end end
+    if result.parameters.q~=0 then for k=1,3 do vertical(result.parameters.q,portal.l*k/4,12) end end
     vertical(portal.P,portal.a,22)
     local function horizontal(load,y,length)
         if load~=0 then
@@ -121,5 +125,5 @@ local function portal_diagram(gc,w,h)
     end
     color(gc,171,193,207);gc:setFont('sansserif','r',8)
     fitted(gc,mode==4 and ('Magnification x'..fmt(samples.magnification)..' | beam w_rel in table') or '1/2/3 member | UP/DOWN s | ENTER table',7,h-31,w-14,8)
-    label(gc,'LEFT/RIGHT mode | TAB input | ESC systems',7,h-15)
+    label(gc,'LEFT/RIGHT mode | TAB sections | ESC systems',7,h-15)
 end

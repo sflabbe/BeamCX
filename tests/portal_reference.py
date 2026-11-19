@@ -8,6 +8,38 @@ from decimal import Decimal as D, localcontext
 import sympy as sp
 
 
+def section_witnesses():
+    """P6C-R1 inputs; independent finite-EA reference and Kleinlogel witness.
+
+    The supplied catalogue constants are witnesses, never a product catalogue.
+    Existing P6A assembly, conditioning and tolerances remain unchanged.
+    """
+    base = dict(h=4, l=6, base='FIX', q=10, P=0, a=3, H=0, w=0)
+    cases = [
+        dict(name='steel/steel Kleinlogel', columns=dict(material=5, profile=16),
+             beam=dict(material=5, profile=10), EIc=7753.2, EIb=17547.6, q_sw=.413982),
+        dict(name='concrete/steel', columns=dict(material=2, b=250, h=450),
+             beam=dict(material=5, profile=10), EIc=56953.125, EIb=17547.6, q_sw=.413982),
+        dict(name='manual/concrete', columns=dict(material=1, manualEI=10000),
+             beam=dict(material=3, b=300, h=500), EIc=10000, EIb=96875, q_sw=3.75),
+    ]
+    for index, case in enumerate(cases):
+        p = dict(base, EIc=case['EIc'], EIb=case['EIb'], q=10+case['q_sw'])
+        if index:
+            p.update(base='PIN' if index == 1 else 'FIX', P=17, a=2.2, H=11, w=6)
+        reference = Reference(p)
+        case.update(parameters=p, reference=reference.export(),
+                    displacement_tol=max(1e-9, 10*float(reference.conditioning()['kappa'])*2.220446049250313e-16))
+        assert case['displacement_tol'] <= 1e-6
+    # Symmetric FIX portal under UDL: k=(EI_b/l)/(EI_c/h), N1=k+2.
+    p = cases[0]['parameters']
+    k = (p['EIb']/p['l'])/(p['EIc']/p['h'])
+    corner = -p['q']*p['l']**2/(6*(k+2))
+    cases[0]['kleinlogel'] = dict(k=k, corner=corner, base=abs(corner)/2,
+                                thrust=1.5*abs(corner)/p['h'], center=p['q']*p['l']**2/8+corner)
+    return cases
+
+
 def zeros(n, m):
     return [[D(0) for _ in range(m)] for _ in range(n)]
 

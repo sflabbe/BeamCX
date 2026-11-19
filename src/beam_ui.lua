@@ -1,4 +1,4 @@
--- BeamCX v0.6.0, UI (TI-Lua 5.1). Single productive Frame engine.
+-- BeamCX v0.6.1, UI (TI-Lua 5.1). Single productive Frame engine.
 local SectionDB=DB -- the offline DB from the generated single-file script
 local presets={'PIN-PIN','FIX-FREE','FIX-FIX','FIX-PIN','CONTINUOUS','PORTAL'}
 local params={L=6,q=10,P=0,a=3,EI=10000,support=1}
@@ -38,6 +38,9 @@ local function copy(t)
 end
 local default_params,default_section,default_continuous=copy(params),copy(section),copy(continuous)
 local default_portal=copy(portal)
+local portal_sections={columns=copy(default_section),beam=copy(default_section)}
+portal_sections.beam.manualEI=default_portal.EIb
+local portal_section_group,portal_beam_self_weight='columns',false
 local function continuous_parameters()
     local p=copy(continuous)
     p.EI=params.EI;p.limit=settings.limit
@@ -70,7 +73,10 @@ local function fmt(x)
     if math.abs(x)<0.005 or math.abs(x)>=1e7 then return string.format('%.2e',x) end
     return string.format('%.2f',x)
 end
-local function sec_info() return SectionDB.compute(section) end
+local function active_section(group)
+    return params.support==6 and portal_sections[group or portal_section_group] or section
+end
+local function sec_info(group) return SectionDB.compute(active_section(group)) end
 local function lref_factor()
     local material=SectionDB.materials[section.material]
     if params.support==2 and material and material.kind=='concrete' then
@@ -80,7 +86,20 @@ local function lref_factor()
     return 1
 end
 local function recalc()
-    if params.support==6 then dirty_portal();return true end
+    if params.support==6 then
+        local columns,message=sec_info('columns')
+        if not columns then err=message;return false end
+        local beam;beam,message=sec_info('beam')
+        if not beam then err=message;return false end
+        local p=copy(portal)
+        p.EIc=columns.EI;p.EIb=beam.EI
+        p.q=p.q+(portal_beam_self_weight and beam.q_sw or 0)
+        local valid;valid,message=PortalPreset.model(p)
+        if not valid then err=message;return false end
+        portal.EIc=columns.EI;portal.EIb=beam.EI
+        if beam.q_sw==nil then portal_beam_self_weight=false end
+        dirty_portal();return true
+    end
     if params.support==5 then
         local info,message=sec_info()
         if not info then err=message;return false end
@@ -179,6 +198,12 @@ local function cache_portal()
     end
     samples.magnification=max_displacement>0 and .12*math.max(portal.h,portal.l)/max_displacement or 1
     local function row(caption,value) samples.table[#samples.table+1]={caption,value} end
+    for _,group in ipairs{'columns','beam'} do
+        local info=sec_info(group)
+        row(group=='columns' and 'Columns' or 'Beam',info.label..
+            (info.kind=='manual' and '' or ' '..SectionDB.materials[portal_sections[group].material].name))
+    end
+    row('Self-weight',(portal_beam_self_weight and ('beam '..fmt(sec_info('beam').q_sw)..' kN/m') or 'beam OFF')..' | columns excluded')
     for _,side in ipairs{'left','right'} do
         local r=result.reactions[side]
         row(side..' base H [kN]',fmt(r.H));row(side..' base V [kN]',fmt(r.V))
@@ -234,6 +259,8 @@ local function rollback_selection(message)
         result=b.result;summary=b.summary;err=b.err;export_message=b.export_message
         q_sw=b.q_sw;samples=b.samples;cursor_value=b.cursor_value;characteristic=b.characteristic
         stale=b.stale;continuous=b.continuous;portal=b.portal
+        portal_sections=b.portal_sections;portal_section_group=b.portal_section_group
+        portal_beam_self_weight=b.portal_beam_self_weight
         portal_confirmed=b.portal_confirmed
         mode=b.mode;table_page=b.table_page;edit_index=b.edit_index;edit_top=b.edit_top
         portal_member=b.portal_member;portal_s=b.portal_s;portal_side=b.portal_side
@@ -245,6 +272,8 @@ local function open_selected_system()
         result=result,summary=summary,err=err,export_message=export_message,q_sw=q_sw,
         samples=samples,cursor_value=cursor_value,characteristic=characteristic,
         stale=stale,continuous=copy(continuous),portal=copy(portal),portal_confirmed=portal_confirmed,
+        portal_sections=copy(portal_sections),portal_section_group=portal_section_group,
+        portal_beam_self_weight=portal_beam_self_weight,
         mode=mode,table_page=table_page,edit_index=edit_index,edit_top=edit_top,
         portal_member=portal_member,portal_s=portal_s,portal_side=portal_side}
     params.support=sel_index
@@ -252,7 +281,7 @@ local function open_selected_system()
     if sel_index==6 then
         selection_before=before.params.support~=6 and before or nil
         selector_error=nil;page=1;edit_index=1;edit_top=1;mode=1;table_page=1
-        if before.params.support~=6 then dirty_portal() end
+        if before.params.support~=6 and not recalc() then rollback_selection(err) end
     elseif sel_index==5 then
         selection_before=before
         if recalc() then selector_error=nil;page=1;edit_index=1;edit_top=1
@@ -361,7 +390,7 @@ end
 local function header(gc,w)
     color(gc,18,44,66);gc:fillRect(0,0,w,22)
     color(gc,255,255,255);gc:setFont('sansserif','b',11)
-    label(gc,'BeamCX | EB 2D | v0.6.0',6,4)
+    label(gc,'BeamCX | EB 2D | v0.6.1',6,4)
 end
 
 local function scroll_top(index,top,count)
@@ -429,6 +458,13 @@ local function draw_selector(gc,w,h)
                 color(gc,242,177,103)
                 gc:drawLine(left+3,bottom,left-6,top)
                 gc:drawLine(right-3,bottom,right+6,top)
+                -- Close member ordinates onto the frame at bases and eaves.
+                gc:drawLine(left,bottom,left+3,bottom)
+                gc:drawLine(right,bottom,right-3,bottom)
+                gc:drawLine(left-6,top,left,top)
+                gc:drawLine(left,top,left,top-6)
+                gc:drawLine(right+6,top,right,top)
+                gc:drawLine(right,top,right,top-6)
                 for k=0,15 do
                     local a,b=k/16,(k+1)/16
                     gc:drawLine(left+(right-left)*a,top-6+32*a*(1-a),
@@ -493,6 +529,7 @@ function on.paint(gc)
     if page==0 then draw_selector(gc,w,h);return end
     if params.support==6 then
         if page==1 then draw_portal_edit(gc,w,h)
+        elseif page==3 then draw_section(gc,w,h)
         elseif calculating then
             color(gc,255,200,112);gc:setFont('sansserif','r',12);label(gc,'Calculating...',20,65)
         elseif result and samples and not stale then
@@ -521,7 +558,10 @@ function on.timer()
     if not calculating or (params.support~=5 and params.support~=6) or page~=2 then return end
     local isportal=params.support==6
     local ok,sol,message
-    if isportal then ok,sol,message=pcall(PortalPreset.solve,copy(portal))
+    if isportal then
+        local p=copy(portal)
+        p.q=p.q+(portal_beam_self_weight and sec_info('beam').q_sw or 0)
+        ok,sol,message=pcall(PortalPreset.solve,p)
     else ok,sol,message=pcall(ContinuousPreset.solve,continuous_parameters()) end
     if ok and sol then
         result=sol;summary=sol.summary
@@ -531,11 +571,14 @@ function on.timer()
     calculating=false
     if ok and sol then
         stale=false;err=nil;selection_before=nil
-        if isportal then portal_confirmed={parameters=copy(portal),result=result,samples=samples} end
+        if isportal then portal_confirmed={parameters=copy(portal),sections=copy(portal_sections),
+            group=portal_section_group,self_weight=portal_beam_self_weight,result=result,samples=samples} end
     else
         if not ok and not message then message=sol end
         if isportal and not selection_before and portal_confirmed then
             portal=copy(portal_confirmed.parameters);result=portal_confirmed.result;summary=result.summary
+            portal_sections=copy(portal_confirmed.sections);portal_section_group=portal_confirmed.group
+            portal_beam_self_weight=portal_confirmed.self_weight
             samples=portal_confirmed.samples;stale=false;cache_cursor()
             page=1;err=message or 'calculation failed'
         else
@@ -545,25 +588,28 @@ function on.timer()
     end
     redraw()
 end
-local function apply_edit(key,v)
+local function apply_edit(key,v,group)
+    local selected=active_section(group)
     if key=='manualEI' or key=='b' or key=='h' then
-        local old=section[key]
-        section[key]=v
-        local info,msg=sec_info()
+        local old=selected[key]
+        selected[key]=v
+        local info,msg=sec_info(group)
         if not info then
-            section[key]=old
-            if params.support~=5 then result=nil;summary=nil end
+            selected[key]=old
+            if params.support~=5 and params.support~=6 then result=nil;summary=nil end
             export_message=nil;err=msg;return
         end
-        recalc()
+        if params.support==6 and old==v then err=nil;return end
+        local valid=recalc()
+        if params.support==6 and not valid then selected[key]=old end
         return
     end
-    if key=='EI' and section.material~=1 then
+    if key=='EI' and selected.material~=1 then
         err='EI from section; use TAB';return
     end
     local old=params[key]
     local olda=params.a
-    if key=='EI' then apply_edit('manualEI',v)
+    if key=='EI' then apply_edit('manualEI',v,group)
     else
         params[key]=v
         -- If there is no point load, its inactive position does not prevent reducing L.
@@ -584,7 +630,9 @@ end
 local function apply_portal(key,value)
     local candidate=copy(portal);candidate[key]=value
     if key=='l' and candidate.P==0 and finite(value) and value>0 and candidate.a>value then candidate.a=value/2 end
-    local valid,message=PortalPreset.model(candidate)
+    local effective=copy(candidate)
+    effective.q=effective.q+(portal_beam_self_weight and sec_info('beam').q_sw or 0)
+    local valid,message=PortalPreset.model(effective)
     if not valid then err=message;export_message=nil;return end
     if candidate[key]==portal[key] and candidate.a==portal.a then err=nil;return end
     portal=candidate;portal_s=math.min(portal_s,portal_member==2 and portal.l or portal.h)
@@ -595,7 +643,10 @@ local function commit()
     local v=tonumber(typing)
     -- Invalid text never changed the model; retain its last valid solution.
     if v==nil then export_message=nil;err='invalid number'
-    elseif page==1 and params.support==6 then apply_portal(portal_fields[edit_index][1],v)
+    elseif page==1 and params.support==6 then
+        local key=portal_fields[edit_index][1]
+        if key=='EIc' or key=='EIb' then apply_edit('EI',v,key=='EIc' and 'columns' or 'beam')
+        else apply_portal(key,v) end
     elseif page==1 and params.support==5 then
         local key=continuous_rows()[edit_index].key
         if type(key)=='number' or key=='g' or key=='q' or key=='gG_sup' or key=='gG_inf' or key=='gQ' then
@@ -605,7 +656,7 @@ local function commit()
     elseif page==3 then
         local row=active_section_index()[sec_index]
         if row and row.editable and row.key~='material' and row.key~='profile'
-           and row.key~='self_weight' then
+           and row.key~='self_weight' and row.key~='group' then
             apply_edit(row.key,v)
         end
     end
@@ -631,20 +682,29 @@ local function step_selection(d)
         recalc()
     elseif page==3 then
         local row=active_section_index()[sec_index]
-        if row.key=='material' then
-            section.material=(section.material-1+d+#SectionDB.materials)%#SectionDB.materials+1
-            sec_index=1;recalc()
+        local selected=active_section()
+        local before=params.support==6 and copy(selected)
+        local weight=portal_beam_self_weight
+        if not row.editable then return end
+        if row.key=='group' then
+            portal_section_group=portal_section_group=='columns' and 'beam' or 'columns';sec_top=1
+            return
+        elseif row.key=='material' then
+            selected.material=(selected.material-1+d+#SectionDB.materials)%#SectionDB.materials+1
+            sec_index=params.support==6 and 2 or 1
         elseif row.key=='profile' then
-            section.profile=(section.profile-1+d+#SectionDB.profiles)%#SectionDB.profiles+1
-            recalc()
+            selected.profile=(selected.profile-1+d+#SectionDB.profiles)%#SectionDB.profiles+1
         elseif row.key=='self_weight' then
             local info=sec_info()
-            if info and info.q_sw then settings.self_weight=not settings.self_weight end
-            recalc()
+            if info and info.q_sw then
+                if params.support==6 then portal_beam_self_weight=not portal_beam_self_weight
+                else settings.self_weight=not settings.self_weight end
+            end
         elseif row.key=='limit' then
             settings.limit=settings.limit==250 and 300 or 250
-            recalc()
-        end
+        else return end
+        local valid=recalc()
+        if before and not valid then portal_sections[portal_section_group]=before;portal_beam_self_weight=weight end
     end
 end
 local function dismiss_restore_notice()
@@ -656,13 +716,10 @@ function on.tabKey()
     local was_editing=typing~=nil
     commit()
     if params.support==6 then
-        if not was_editing or not err then
-            if page==1 then err=nil;show_results() else page=1 end
-        elseif page==2 then page=1 end
-        if calculating and page~=2 then timer.stop();calculating=false end
-        redraw();return
+        if was_editing and err then redraw();return end
+        if page==1 then err=nil end
     end
-    if result or params.support==5 then
+    if result or params.support==5 or params.support==6 then
         if page==1 then show_results()
         elseif page==2 then page=3
         elseif page==3 then page=1 end
@@ -685,7 +742,7 @@ function on.enterKey()
         end
     elseif page==3 then
         local row=active_section_index()[sec_index]
-        if row.key=='material' or row.key=='profile' or row.key=='self_weight' or row.key=='limit' then step_selection(1)
+        if row.key=='group' or row.key=='material' or row.key=='profile' or row.key=='self_weight' or row.key=='limit' then step_selection(1)
         else commit() end
     end
     redraw()
@@ -708,7 +765,7 @@ function on.charIn(ch)
     elseif page==1 then can=edit_index~=1 and (names[edit_index]~='EI' or section.material==1)
     elseif page==3 then
         local row=active_section_index()[sec_index]
-        can=row.editable and row.key~='material' and row.key~='profile' and row.key~='self_weight' and row.key~='limit'
+        can=row.editable and row.key~='group' and row.key~='material' and row.key~='profile' and row.key~='self_weight' and row.key~='limit'
     end
     if not can then return end
     if ch=='−' then ch='-' end -- TI handheld minus key can send U+2212
@@ -847,33 +904,45 @@ function on.arrowRight()
 end
 -- Saved inside the .tns document when the user saves it (TI Lua API on.save/restore).
 function on.save()
-    return {format='0.6.0',params=copy(params),section=copy(section),portal=copy(portal),
+    return {format='0.6.1',params=copy(params),section=copy(section),portal=copy(portal),
+        portal_sections=copy(portal_sections),portal_section_group=portal_section_group,
+        portal_beam_self_weight=portal_beam_self_weight,
         continuous=copy(continuous),page=page,mode=mode,cursor=cursor,
         portal_member=portal_member,portal_s=portal_s,portal_side=portal_side,
         settings=copy(settings)}
 end
 local function valid_document(data)
-    if type(data)~='table' or data.format~='0.6.0' then return false end
+    if type(data)~='table' or data.format~='0.6.1' then return false end
     local p,s,c,t=data.params,data.section,data.continuous,data.settings
     if type(p)~='table' or type(s)~='table' or type(c)~='table' or type(t)~='table' then return false end
     local function integer(v,lo,hi) return finite(v) and v%1==0 and v>=lo and v<=hi end
-    if not PortalPreset.model(data.portal) or not integer(data.portal_member,1,3)
+    local function valid_section(s)
+        if type(s)~='table' or not integer(s.material,1,#SectionDB.materials)
+           or not integer(s.profile,1,#SectionDB.profiles) then return nil end
+        for _,key in ipairs{'b','h','manualEI'} do
+            if not finite(s[key]) or s[key]<=0 then return nil end
+        end
+        local info=SectionDB.compute(s)
+        if info and finite(info.EI) and info.EI>0 then return info end
+    end
+    if not valid_section(s) or type(data.portal_sections)~='table' then return false end
+    local columns,beam=valid_section(data.portal_sections.columns),valid_section(data.portal_sections.beam)
+    if not columns or not beam or type(data.portal)~='table' or not finite(data.portal.q)
+       or (data.portal_section_group~='columns' and data.portal_section_group~='beam')
+       or type(data.portal_beam_self_weight)~='boolean'
+       or (data.portal_beam_self_weight and not beam.q_sw) then return false end
+    local effective=copy(data.portal)
+    effective.EIc=columns.EI;effective.EIb=beam.EI
+    effective.q=effective.q+(data.portal_beam_self_weight and beam.q_sw or 0)
+    if not PortalPreset.model(effective) or not integer(data.portal_member,1,3)
        or not finite(data.portal_s) or data.portal_s<0
        or data.portal_s>(data.portal_member==2 and data.portal.l or data.portal.h)
        or (data.portal_side~='left' and data.portal_side~='right') then return false end
     if not integer(data.page,0,3) or not integer(data.mode,1,p.support==6 and 5 or 4)
        or not finite(data.cursor) or data.cursor<0 or data.cursor>1 then return false end
-    if p.support==6 and data.page==3 then return false end
     if not integer(p.support,1,6) or not finite(p.L) or p.L<=0
        or not finite(p.EI) or p.EI<=0 or not finite(p.q) or not finite(p.P)
        or not finite(p.a) or p.a<0 or p.a>p.L then return false end
-    if not integer(s.material,1,#SectionDB.materials)
-       or not integer(s.profile,1,#SectionDB.profiles) then return false end
-    for _,key in ipairs{'b','h','manualEI'} do
-        if not finite(s[key]) or s[key]<=0 then return false end
-    end
-    local info=SectionDB.compute(s)
-    if not info or not finite(info.EI) or info.EI<=0 then return false end
     if type(t.self_weight)~='boolean' or (t.limit~=250 and t.limit~=300) then return false end
     if type(c.spans)~='table' or not integer(#c.spans,2,ContinuousPreset.MAX_SPANS) then return false end
     for key in pairs(c.spans) do if not integer(key,1,#c.spans) then return false end end
@@ -883,20 +952,26 @@ local function valid_document(data)
     for _,key in ipairs{'gG_sup','gG_inf','gQ'} do
         if not finite(c[key]) or c[key]<=0 then return false end
     end
-    return true
+    effective.q=data.portal.q
+    return true,effective
 end
 function on.restore(data)
     if calculating then timer.stop() end
-    local valid=valid_document(data)
+    local valid,restored_portal=valid_document(data)
     params=copy(default_params);section=copy(default_section);continuous=copy(default_continuous)
     portal=copy(default_portal);portal_member=2;portal_s=3;portal_side='left';portal_confirmed=nil
+    portal_sections={columns=copy(default_section),beam=copy(default_section)}
+    portal_sections.beam.manualEI=default_portal.EIb
+    portal_section_group='columns';portal_beam_self_weight=false
     settings={self_weight=false,limit=250}
     page=0;mode=1;cursor=.5;table_page=1;edit_index=1;sec_index=1;edit_top=1;sec_top=1
     typing=nil;selector_error=nil;selection_before=nil;restore_notice=nil
     dirty()
     if valid then
         params=copy(data.params);section=copy(data.section);continuous=copy(data.continuous)
-        portal=copy(data.portal);portal_member=data.portal_member;portal_s=data.portal_s;portal_side=data.portal_side
+        portal=restored_portal;portal_member=data.portal_member;portal_s=data.portal_s;portal_side=data.portal_side
+        portal_sections=copy(data.portal_sections);portal_section_group=data.portal_section_group
+        portal_beam_self_weight=data.portal_beam_self_weight
         settings=copy(data.settings)
     else
         restore_notice='Invalid document or version: defaults restored'

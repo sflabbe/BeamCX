@@ -28,3 +28,14 @@ for _=1,6 do on.arrowDown() end
 capture('Results: member forces / extrema')
 for _=1,25 do on.arrowDown() end
 capture('Results: drifts / chord-relative w')
+
+-- P6C-R1: shared catalogue and effective beam self-weight, actual bundled UI.
+doc=on.save();doc.page=3;doc.mode=1;doc.portal_section_group='columns'
+doc.portal={h=4,l=6,base='FIX',EIc=0,EIb=0,q=10,P=0,a=3,H=0,w=0}
+doc.portal_sections.columns.material=5;doc.portal_sections.columns.profile=16
+doc.portal_sections.beam.material=5;doc.portal_sections.beam.profile=10
+doc.portal_beam_self_weight=true
+on.restore(doc);capture('Columns: HEA 200 S235 / axial weight excluded')
+on.arrowRight();capture('Beam: IPE 300 S235 / self-weight ON')
+on.tabKey();on.tabKey();on.timer();capture('Kleinlogel: M center 29.06 / sw=0.41')
+on.enterKey();capture('Results: section and self-weight provenance')

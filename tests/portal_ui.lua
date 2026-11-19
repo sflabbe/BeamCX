@@ -38,6 +38,9 @@ local function field(index)
     while state().edit_index<index do on.arrowDown() end
     while state().edit_index>index do on.arrowUp() end
 end
+local function input()
+    while state().page~=1 do on.tabKey() end
+end
 local function edit(text)
     for ch in text:gmatch('.') do on.charIn(ch) end
     on.enterKey()
@@ -52,7 +55,9 @@ local function calculate()
     on.timer();assert(not running and state().result and state().samples and not state().stale)
     assert(nf==1 and np==1,'exactly one productive solve required')
     Frame.solve=fs;PortalPreset.solve=ps
-    local reference=assert(ps(on.save().portal))
+    local effective=copy(on.save().portal)
+    if state().portal_beam_self_weight then effective.q=effective.q+DB.compute(state().portal_sections.beam).q_sw end
+    local reference=assert(ps(effective))
     same(reference.reactions,state().result.reactions)
     same(reference.members,state().result.members)
     same(reference.corners,state().result.corners)
@@ -104,9 +109,9 @@ field(6);on.charIn('9');on.escapeKey();same(on.save().portal,valid)
 Frame.solve=f
 field(6);edit('-8.75');local result=calculate();export()
 local saved=on.save();local old_samples=state().samples
-on.tabKey();field(6);edit('-8.75');assert(state().samples==old_samples and not state().stale)
+input();field(6);edit('-8.75');assert(state().samples==old_samples and not state().stale)
 field(2);edit('0');assert(state().result==result and state().samples==old_samples)
-contains(paint(),'invalid h');on.tabKey();assert(not running);on.tabKey()
+contains(paint(),'invalid h');on.tabKey();assert(not running);input()
 -- Inactive a resets only with P=0; active a makes shortening fail.
 field(7);edit('0');field(8);edit('7');field(3);edit('4')
 eq(on.save().portal.a,2);field(7);edit('4');field(8);edit('3.5');field(3);edit('3')
@@ -132,12 +137,13 @@ for _,case in ipairs{
     elseif case.H==10 then eq(result.drift.left,.016,5e-5) end
     export()
     local rows=state().samples.table;local format=state().format_number
-    assert(#rows==29)
-    assert(rows[1][2]==format(result.reactions.left.H) and rows[5][2]==format(result.reactions.right.V))
-    assert(rows[3][2]==(result.reactions.left.M and format(result.reactions.left.M) or '—'))
-    assert(rows[19][2]==format(result.corners.left.column) and rows[22][2]==format(result.corners.right.beam))
-    assert(rows[23][2]==format(result.drift.left*1000) and rows[25][2]==format(result.drift.right*1000))
-    assert(rows[27][2]==format(result.deflection.value*1000) and rows[29][2]==format(result.deflection.position))
+    assert(#rows==32)
+    assert(rows[1][1]=='Columns' and rows[2][1]=='Beam' and rows[3][1]=='Self-weight')
+    assert(rows[4][2]==format(result.reactions.left.H) and rows[8][2]==format(result.reactions.right.V))
+    assert(rows[6][2]==(result.reactions.left.M and format(result.reactions.left.M) or '—'))
+    assert(rows[22][2]==format(result.corners.left.column) and rows[25][2]==format(result.corners.right.beam))
+    assert(rows[26][2]==format(result.drift.left*1000) and rows[28][2]==format(result.drift.right*1000))
+    assert(rows[30][2]==format(result.deflection.value*1000) and rows[32][2]==format(result.deflection.position))
     -- At least one exported value keeps precision beyond the display string.
     assert(result.drift.left*1000~=tonumber(state().format_number(result.drift.left*1000)))
 end
@@ -236,12 +242,13 @@ for _,doc in ipairs(dofile(root..'/tests/fixtures/beam_v050_saved.lua')) do
 end
 for _,support in ipairs{1,5,6} do
     local doc=copy(defaults);doc.params.support=support;doc.page=1
-    doc.portal.EIc=12345.123456789;doc.portal.H=-3.123456789;doc.portal_s=1.234567890123
+    doc.portal_sections.columns.manualEI=12345.123456789;doc.portal.EIc=12345.123456789
+    doc.portal.H=-3.123456789;doc.portal_s=1.234567890123
     on.restore(doc);same(on.save(),doc)
 end
 local good=on.save()
-for _,change in ipairs{{'format','0.5.0'},{'portal',nil},{'portal_member',4},{'portal_s',99},{'portal_side','bad'},
-    {'portal','h',0},{'portal','l',-1},{'portal','EIc',0},{'portal','EIb',0},{'portal','P',0/0},
+for _,change in ipairs{{'format','0.5.0'},{'format','0.6.0'},{'portal',nil},{'portal_member',4},{'portal_s',99},{'portal_side','bad'},
+    {'portal','h',0},{'portal','l',-1},{'portal','P',0/0},
     {'portal','a',7},{'continuous','q',false},{'params','L',0}} do
     local doc=copy(good)
     if #change==3 then doc[change[1]][change[2]]=change[3] else doc[change[1]]=change[2] end
@@ -251,11 +258,11 @@ good.page=2;good.mode=4;on.restore(good);assert(state().page==1 and state().stal
 calculate();local roundtrip=on.save();on.restore(roundtrip);assert(state().page==1 and state().stale)
 -- No solutions, samples or timers are serialized.
 for _,key in ipairs{'result','frame','samples','calculating','portal_confirmed'} do assert(on.save()[key]==nil) end
-print('PASS strict v0.6 persistence: precision round trips, both v0.5 rejected, malformed state reset atomically')
+print('PASS strict v0.6.1 persistence: precision round trips, v0.5/v0.6.0 rejected, malformed state reset atomically')
 
 -- Deferred calculation failure returns the last confirmed portal parameters/result/cache.
 calculate();local before=state();local model=on.save().portal
-on.tabKey();field(6);edit('7');local ps=PortalPreset.solve
+input();field(6);edit('7');local ps=PortalPreset.solve
 PortalPreset.solve=function() return nil,'portal failure' end
 on.tabKey();on.timer();PortalPreset.solve=ps
 assert(state().page==1 and state().err=='portal failure' and state().result==before.result and state().samples==before.samples)
@@ -292,11 +299,191 @@ for _,size in ipairs{{318,212},{320,212},{320,240}} do
             on.arrowRight()
         end
         if sign==0 then
-            assert(state().samples.table[24][2]=='—' and state().samples.table[26][2]=='—' and state().samples.table[28][2]=='—')
+            assert(state().samples.table[27][2]=='—' and state().samples.table[29][2]=='—' and state().samples.table[31][2]=='—')
         end
         for _=1,32 do paint();on.arrowUp() end
         for _=1,32 do on.arrowDown();paint() end
     end end
 end
 print('PASS portal layouts/arrows: 318x212, 320x212, 320x240; both bases, signed/zero loads, all modes and scroll rows')
-print('PASS P6B portal UI productive bundle')
+-- P6C-R1 extends this same productive harness; no second renderer or solver.
+local function sections()
+    while state().page~=3 do on.tabKey() end
+    assert(not running);paint()
+end
+local function section_field(key)
+    while state().sec_index>1 do on.arrowUp() end
+    while state().section_rows()[state().sec_index].key~=key do
+        local old=state().sec_index;on.arrowDown()
+        assert(state().sec_index~=old,'unreachable section field '..key)
+    end
+end
+local function group(name)
+    section_field('group')
+    if state().portal_section_group~=name then on.arrowRight() end
+    assert(state().portal_section_group==name)
+end
+local function catalogue_doc(case)
+    local doc=copy(defaults);doc.params.support=6;doc.page=1
+    doc.portal=copy(case.parameters);doc.portal.q=10
+    for _,name in ipairs{'columns','beam'} do
+        for k,v in pairs(case[name]) do doc.portal_sections[name][k]=v end
+    end
+    doc.portal_beam_self_weight=true
+    -- Deliberately contradictory cached values: groups always prevail.
+    doc.portal.EIc=-77;doc.portal.EIb=0
+    return doc
+end
+fresh();defaults=on.save();assert(defaults.format=='0.6.1')
+open();local baseline=assert(PortalPreset.solve(copy(defaults.portal)))
+local default_result=calculate();same(default_result.reactions,baseline.reactions)
+same(default_result.members,baseline.members);same(export(),expected_export(baseline))
+eq(default_result.corners.left.beam,-20,5e-5)
+eq(PortalPreset.at(default_result,2,3).M,25,5e-5)
+eq(PortalPreset.at(default_result,2,3).N,-7.5,5e-5)
+print('PASS P6C-R1 defaults: P6B reactions, member forces and all fourteen bp_* unchanged')
+
+for _,case in ipairs(section_cases) do
+    local doc=catalogue_doc(case);local untouched=copy(doc)
+    on.restore(doc);same(doc,untouched)
+    local columns,beam=DB.compute(doc.portal_sections.columns),DB.compute(doc.portal_sections.beam)
+    assert(state().portal.EIc==columns.EI and state().portal.EIb==beam.EI)
+    local sol=calculate();local ref=case.reference
+    local p=sol.parameters;local force=math.abs(p.q*p.l)+math.abs(p.P)+math.abs(p.H)+math.abs(p.w*p.h)
+    local length=math.max(p.h,p.l);local mscale=force*length
+    local dscale=math.max(math.abs(ref.drift.left),math.abs(ref.drift.right),1e-6*force*length^3/math.min(p.EIc,p.EIb))
+    local function reference_eq(actual,want,scale,tol)
+        assert(math.abs(actual-want)<=(tol or 1e-9)*scale,case.name..': independent reference mismatch')
+    end
+    for i,side in ipairs{'left','right'} do
+        for _,key in ipairs{'H','V','M'} do
+            if sol.reactions[side][key] then reference_eq(sol.reactions[side][key],ref.reactions[i][key],key=='M' and mscale or force) end
+        end
+        reference_eq(sol.drift[side],ref.drift[side],dscale,case.displacement_tol)
+    end
+    for d=1,12 do reference_eq(sol.frame.u[d],ref.nodal_displacements[d],d%3==0 and dscale/length or dscale,case.displacement_tol) end
+    for i,m in ipairs(sol.members) do
+        reference_eq(m.axial.value,ref.members[i].N,force)
+        for _,key in ipairs{'minimum','maximum'} do reference_eq(m.moments[key].value,ref.members[i].moments[key].value,mscale) end
+    end
+    reference_eq(sol.deflection.value,ref.deflection.value,math.max(ref.deflection.absolute,1e-6*force*p.l^3/p.EIb),case.displacement_tol)
+    assert(p.EIc==columns.EI and p.EIb==beam.EI and p.q==10+beam.q_sw)
+    assert(on.save().portal.q==10)
+    same(export(),expected_export(sol));contains(paint(),'Self-weight')
+    if case.kleinlogel then
+        local k=case.kleinlogel
+        eq(columns.EI,7753.2);eq(beam.EI,17547.6);eq(beam.q_sw,.413982);eq(p.q,10.413982)
+        eq(k.k,1.508848,1e-6)
+        eq(sol.corners.left.beam,k.corner,1e-4);eq(math.abs(sol.reactions.left.M),k.base,1e-4)
+        eq(math.abs(sol.reactions.left.H),k.thrust,1e-4);eq(PortalPreset.at(sol,2,3).M,k.center,1e-4)
+        eq(k.corner,-17.807523,1e-7);eq(k.base,8.903762,1e-7)
+        eq(k.thrust,6.677821,1e-7);eq(k.center,29.055396,1e-7)
+        on.arrowRight();contains(paint(),'sw=0.41')
+        print(string.format('KLEINLOGEL | EIc=%.12g EIb=%.12g sw=%.12g total=%.12g k=%.12g corner=%.12g base=%.12g thrust=%.12g center=%.12g',
+            columns.EI,beam.EI,beam.q_sw,p.q,k.k,sol.corners.left.beam,math.abs(sol.reactions.left.M),math.abs(sol.reactions.left.H),PortalPreset.at(sol,2,3).M))
+    end
+    for _=1,2 do
+        on.restore(on.save());calculate()
+        assert(on.save().portal.q==10 and state().result.parameters.q==10+beam.q_sw)
+    end
+    sections();group('columns');contains(paint(),'Excluded (axial)')
+    local rows=state().section_rows()
+    assert(rows[1].key=='group' and rows[#rows].key=='self_weight' and not rows[#rows].editable)
+    for _,r in ipairs(rows) do assert(r.key~='limit') end
+    group('beam');assert(state().portal_sections.columns.material==case.columns.material)
+    local saved_group=on.save();on.restore(saved_group);same(on.save(),saved_group)
+    assert(state().page==3 and state().portal_section_group=='beam' and not running)
+    print('PASS section route + finite-EA Python reference: '..case.name)
+end
+
+-- All shared handlers, actual keyboard selection and the existing TAB cycle.
+fresh();open();local solve=Frame.solve;Frame.solve=function() error('section page solved') end
+sections();group('columns');section_field('manualEI');edit('11000.125')
+assert(state().portal.EIc==11000.125 and state().portal.EIb==15000)
+section_field('material');for _=1,4 do on.arrowRight() end
+section_field('profile');for _=1,10 do on.arrowRight() end -- IPE 200 -> HEA 200
+assert(state().portal_sections.columns.profile==16)
+for _=1,12 do on.arrowDown() end -- excluded row is never focusable
+assert(state().portal_beam_self_weight==false)
+group('beam');section_field('material');for _=1,4 do on.arrowRight() end
+section_field('profile');for _=1,4 do on.arrowRight() end -- IPE 300
+section_field('self_weight');on.enterKey();assert(state().portal_beam_self_weight)
+assert(state().stale and not running);paint()
+Frame.solve=solve;input();local steel=on.save();local sol=calculate()
+assert(sol.parameters.q==10+DB.compute(steel.portal_sections.beam).q_sw)
+input();field(4);edit('123');assert(state().err=='EI from section; use TAB')
+assert(state().portal.EIc==DB.compute(steel.portal_sections.columns).EI)
+field(5);edit('456');assert(state().err=='EI from section; use TAB')
+assert(state().portal.EIb==DB.compute(steel.portal_sections.beam).EI)
+sections();group('beam');section_field('material')
+for _=1,4 do on.arrowLeft() end -- MANUAL disables only portal beam self-weight
+assert(not state().portal_beam_self_weight and state().portal_sections.beam.material==1)
+section_field('manualEI');edit('17000.875');assert(state().portal.EIb==17000.875)
+input();field(5);edit('18000.125');assert(state().portal_sections.beam.manualEI==18000.125)
+assert(state().portal_sections.columns.profile==16 and not state().self_weight)
+print('PASS shared group/material/profile/manual EI/edit/TAB handlers; deferred sections and beam-only self-weight')
+
+-- Actual UDL arrows use the effective load, including q_user <= 0.
+for _,q in ipairs{0,-.2} do
+    local doc=catalogue_doc(section_cases[1]);doc.portal.q=q
+    on.restore(doc);calculate();paint();assert(#gc.polygons==3)
+    for _,shape in ipairs(gc.polygons) do assert(shape.points[6]>(shape.points[2]+shape.points[4])/2) end
+    assert(on.save().portal.q==q)
+end
+
+-- Complete current documents, isolated validation and derived-cache precedence.
+for _,doc in ipairs(dofile(root..'/tests/current_documents.lua')(defaults,true)) do
+    on.restore(doc);same(on.save(),doc)
+end
+local good=catalogue_doc(section_cases[1]);good.page=3;good.portal_section_group='beam'
+for _,support in ipairs{1,5,6} do
+    local doc=copy(good);doc.params.support=support
+    on.restore(doc);local saved=on.save()
+    assert(saved.portal.EIc==DB.compute(doc.portal_sections.columns).EI and saved.portal.EIb==DB.compute(doc.portal_sections.beam).EI)
+    assert(doc.portal.EIc==-77 and doc.portal.EIb==0)
+end
+for _,change in ipairs{
+    function(d) d.format='0.6.0' end,
+    function(d) d.portal_sections=nil end,
+    function(d) d.portal_sections.columns=nil end,
+    function(d) d.portal_sections.beam=false end,
+    function(d) d.portal_sections.columns.material=1.5 end,
+    function(d) d.portal_sections.beam.profile=999 end,
+    function(d) d.portal_sections.columns.b=-1 end,
+    function(d) d.portal_sections.beam.h=0 end,
+    function(d) d.portal_sections.columns.manualEI=0/0 end,
+    function(d) d.portal_sections.beam.material=2;d.portal_sections.beam.h=1e200 end,
+    function(d) d.portal_sections.beam.material=1 end,
+    function(d) d.portal_section_group='bad' end,
+    function(d) d.portal_beam_self_weight=1 end,
+    function(d) d.portal.q=false end,
+    function(d) d.portal.h=0 end,
+} do
+    on.restore(good);local bad=copy(good);change(bad)
+    on.restore(bad);same(on.save(),defaults)
+    assert(state().restore_notice=='Invalid document or version: defaults restored' and not running)
+end
+print('PASS strict v0.6.1 groups/page 3 round-trip; derived EI wins; invalid groups/weight/model/version reset atomically')
+
+-- Failed deferred work also rolls back the section groups and weight flag.
+on.restore(good);input();sol=calculate();local confirmed=on.save();local cache=state().samples
+sections();group('beam');section_field('material');for _=1,4 do on.arrowLeft() end
+input();local preset=PortalPreset.solve;PortalPreset.solve=function() return nil,'section failure' end
+on.tabKey();on.timer();PortalPreset.solve=preset
+assert(state().err=='section failure' and state().result==sol and state().samples==cache)
+same(state().portal_sections,confirmed.portal_sections);assert(state().portal_beam_self_weight)
+
+-- New section/provenance layouts at every supported viewport and material mix.
+for _,size in ipairs{{318,212},{320,212},{320,240}} do
+    width,height=size[1],size[2]
+    for _,case in ipairs(section_cases) do
+        on.restore(catalogue_doc(case));sections()
+        for _,name in ipairs{'columns','beam'} do
+            group(name);paint();for _=1,10 do on.arrowDown();paint() end
+        end
+        input();calculate()
+        for _=1,5 do paint();on.arrowRight() end
+        on.enterKey();for _=1,35 do on.arrowDown();paint() end
+    end
+end
+print('PASS P6C-R1 portal productive bundle; catalogue, self-weight, provenance and all target layouts')

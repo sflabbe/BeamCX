@@ -1,9 +1,30 @@
-"""P6B: actual bundled portal UI, events, physics, CAS, persistence and layout."""
+"""P6C-R1: actual portal UI, shared sections, independent oracles and regression."""
 import ctypes
+from decimal import Decimal
+import importlib.util
 from pathlib import Path
 
+from portal_reference import section_witnesses
+
 root = Path(__file__).resolve().parents[1]
-script = f"local root={str(root)!r}\n" + (root/'tests/portal_ui.lua').read_text()
+spec = importlib.util.spec_from_file_location('portal_literals', root/'tools/make_beam_golden.py')
+builder = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(builder)
+
+
+def floats(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, list):
+        return [floats(v) for v in value]
+    if isinstance(value, dict):
+        return {k: floats(v) for k, v in value.items()}
+    return value
+
+
+script = (f"local root={str(root)!r}\nlocal section_cases="
+          + builder.literal(floats(section_witnesses()))+'\n'
+          + (root/'tests/portal_ui.lua').read_text())
 lib = ctypes.CDLL('liblua5.4.so.0')
 lib.luaL_newstate.restype = ctypes.c_void_p
 lib.luaL_openlibs.argtypes = [ctypes.c_void_p]

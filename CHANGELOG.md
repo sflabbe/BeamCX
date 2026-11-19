@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 — P6C-R1 portal section groups
+- Reused the existing catalogue, section page and edit handlers for independent Columns / Beam groups. Both columns share one section; EIc/EIb are derived caches, with manual EI edits routed to the corresponding group.
+- Added optional beam-only self-weight through copied solver parameters. Input q remains unchanged; MANUAL forces OFF, columns show `Excluded (axial)`. Results retain fourteen bp_* exports and add three provenance rows plus an active `sw=…` load label.
+- Portal TAB now cycles Input → Results → Sections → Input, retaining deferred calculation, cached plotting and transactional rollback. Strict format 0.6.1 saves both groups, active group and beam weight flag; validation derives EI before checking the model. No v0.6.0 migration.
+- Closed the orange PORTAL reference-moment ordinates at the bases and eaves. Selector regression now rejects disconnected endpoints; numerical results and the other five cards are unchanged.
+- Frozen all five numerical/catalogue modules and historical fixtures. Extended the existing 16-suite harnesses with route parity, finite-EA references, Kleinlogel, persistence and layouts; no additional permanent suite or renderer. Evidence: VALIDATION_P6C_R1.md and PORTAL_UI_CONTACT.png.
+- Status: **PC IMPLEMENTATION/PASS — HARDWARE PENDING**. P6C-0 hardware acceptance is the baseline; v0.6.1 requires owner testing on the original CX.
+
 ## 0.6.0 — P6C-0-R1 development
 - Separated single-span, continuous, portal and section presentation into four static UI fragments. The main entry point retains shared state, events, calculation/cache scheduling, editing, rollback, CAS and persistence. All existing function bodies are unchanged.
 - Added an offline, hash-checked P6B bundle and exact differential event/graphics comparison at 318×212, 320×212 and 320×240. Numerical modules, catalogue, historical fixtures, exports and document format remain unchanged; no portal section selection.

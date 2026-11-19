@@ -13,7 +13,10 @@ function _BX_TEST_STATE()
         continuous=copy(continuous),samples=samples,cursor_value=cursor_value,
         stale=stale,calculating=calculating,table_page=table_page,edit_index=edit_index,
         edit_top=edit_top,characteristic=characteristic,
-        portal=copy(portal),portal_member=portal_member,portal_s=portal_s,portal_side=portal_side}
+        portal=copy(portal),portal_member=portal_member,portal_s=portal_s,portal_side=portal_side,
+        portal_sections=copy(portal_sections),portal_section_group=portal_section_group,
+        portal_beam_self_weight=portal_beam_self_weight,sec_index=sec_index,sec_top=sec_top,
+        section_rows=section_rows}
 end
 ]=]
     return assert((loadstring or load)(source..'\n'..snapshot,'@'..path))()

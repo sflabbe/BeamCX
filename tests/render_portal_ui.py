@@ -46,7 +46,7 @@ cell_w, cell_h = 318*scale+padding, 212*scale+title_height+padding
 sheet = Image.new('RGB', (columns*cell_w+padding, ((len(screens)+columns-1)//columns)*cell_h+100), '#e5ebf1')
 draw = ImageDraw.Draw(sheet)
 heading = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
-draw.text((padding, 12), 'BeamCX v0.6.0 | real application drawing commands | PC simulation', fill='#122c42', font=heading)
+draw.text((padding, 12), 'BeamCX v0.6.1 | real application drawing commands | PC simulation', fill='#122c42', font=heading)
 draw.text((padding, 43), '318 x 212 simulated canvas; font metrics differ from physical TI-Nspire CX CAS.', fill='#385169', font=heading)
 for index, (title, frame) in enumerate(screens):
     x = padding+(index % columns)*cell_w

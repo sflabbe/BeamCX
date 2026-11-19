@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 — P6C-0-R1 development
+- Separated single-span, continuous, portal and section presentation into four static UI fragments. The main entry point retains shared state, events, calculation/cache scheduling, editing, rollback, CAS and persistence. All existing function bodies are unchanged.
+- Added an offline, hash-checked P6B bundle and exact differential event/graphics comparison at 318×212, 320×212 and 320×240. Numerical modules, catalogue, historical fixtures, exports and document format remain unchanged; no portal section selection.
+- Validation and before/after evidence: VALIDATION_P6C0.md and P6C0_UI_COMPARISON.png. Original-CX acceptance of this refactor remains pending; accepted P6B hardware behavior is the baseline.
+
 ## 0.6.0 — P6B-R1 rectangular portal
 - Added the sixth PORTAL selector card and productive UI → PortalPreset.solve → Frame.solve route. All four numerical modules remain frozen from P6A CLOSED/PASS.
 - Added scrolling manual h/l, equal PIN/FIX bases, EIc/EIb and characteristic q/P/a/H/w input, deferred timer calculation and transactional recovery after failed edits/calculations. No portal catalogue or self-weight.

@@ -1,5 +1,13 @@
 from pathlib import Path
 root=Path(__file__).resolve().parent
+# Presentation fragments share the entry point's lexical state. Expand these
+# explicit markers before compiling the one TI-Lua chunk; no runtime loading.
+ui_views=(
+    'beam_ui_single.lua',
+    'beam_ui_continuous.lua',
+    'beam_ui_portal.lua',
+    'beam_ui_sections.lua',
+)
 parts=[]
 for name, marker, localname in [
     ('section_db.lua','return DB\n','DB'),
@@ -9,6 +17,11 @@ for name, marker, localname in [
     ('portal_preset.lua','return PortalPreset\n','PortalPreset'),
     ('beam_ui.lua',None,None)]:
     src=(root/'src'/name).read_text(encoding='utf-8')
+    if name=='beam_ui.lua':
+        for view in ui_views:
+            include='-- @include '+view
+            assert src.count(include)==1, view
+            src=src.replace(include,(root/'src'/view).read_text(encoding='utf-8').rstrip())
     if marker:
         assert src.rstrip().endswith(marker.strip()), name
         src=src[:src.rfind(marker)]

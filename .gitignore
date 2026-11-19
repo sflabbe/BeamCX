@@ -3,6 +3,7 @@
 /BeamCX.tns
 /bench.lua
 /BXBENCH.tns
+/artifacts/
 
 # Python local artifacts
 __pycache__/
